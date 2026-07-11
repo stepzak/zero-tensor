@@ -1,2 +1,2 @@
-mod buffer;
-mod tensor_meta;
+pub mod buffer;
+pub mod tensor_meta;
