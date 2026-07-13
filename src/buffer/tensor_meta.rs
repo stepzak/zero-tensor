@@ -8,7 +8,11 @@ pub struct TensorDOffsets {
 
 impl TensorDOffsets {
     pub fn new(shapes: usize, strides: usize, data: usize) -> Self {
-        TensorDOffsets { shapes, strides, data }
+        TensorDOffsets {
+            shapes,
+            strides,
+            data,
+        }
     }
 
     pub fn shapes(&self) -> usize {
@@ -24,12 +28,11 @@ impl TensorDOffsets {
     }
 }
 
-
 #[repr(C, align(8))]
 #[derive(Clone, Copy)]
 pub struct TensorHeader {
     dt: TensorDT,
-    ndims: u8, 
+    ndims: u8,
 }
 
 impl TensorHeader {
@@ -56,11 +59,9 @@ impl TensorHeader {
 
         let shapes_offset = th_size;
         let strides_offset = shapes_offset + ss_size;
-    
-        let data_offset = (strides_offset + ss_size + 7) & !7; 
-        
+
+        let data_offset = (strides_offset + ss_size + 7) & !7;
+
         TensorDOffsets::new(shapes_offset, strides_offset, data_offset)
     }
-
-
 }

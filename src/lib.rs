@@ -1,5 +1,5 @@
-pub mod dataset;
 pub mod buffer;
+pub mod dataset;
 pub mod producer;
 
 pub fn add(left: u64, right: u64) -> u64 {
