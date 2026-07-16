@@ -14,11 +14,11 @@ mod tests {
     use std::time::Duration;
     use tempfile::tempdir;
 
-    use crate::buffer::buffer::ZeroTensorBuffer;
+    use crate::buffer::ZeroTensorBuffer;
     use crate::buffer::tensor_meta::TensorHeader;
-    use crate::dataset::dataset::ZeroTensorDataset;
+    use crate::dataset::ZeroTensorDataset;
     use crate::dataset::item::{ShapeType, StrideType, TensorDT, TensorItemMeta};
-    use crate::producer::producer::{CONSUMER_RESP_BUFFER, ZeroTensorProducer};
+    use crate::producer::{CONSUMER_RESP_BUFFER, ZeroTensorProducer};
 
     struct NonContiguousMockDataset {
         len: usize,
@@ -27,6 +27,10 @@ mod tests {
     impl ZeroTensorDataset for NonContiguousMockDataset {
         fn len(&self) -> usize {
             self.len
+        }
+
+        fn is_empty(&self) -> bool {
+            self.len > 0
         }
 
         fn get_item(&self, idx: usize) -> Option<(Vec<u8>, TensorItemMeta)> {
