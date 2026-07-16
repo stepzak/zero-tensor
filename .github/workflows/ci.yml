@@ -1,4 +1,4 @@
-name: Rust CI
+name: CI
 
 on:
   push:
@@ -14,9 +14,31 @@ jobs:
     name: Code Quality & Tests
     runs-on: ubuntu-latest
 
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
+
+    - name: Set up UV
+      uses: astral-sh/setup-uv@v5
+      with: 
+        enable-cache: true
+        cache-dependency-glob: "zero-tensor-py/uv.lock"
+        python-version: ${{ matrix.python-version }}
+
+    - name: Install UV dependencies
+      run: uv sync --locked --project zero-tensor-py
+
+    - name: Run Ruff
+      working-directory: ./zero-tensor-py
+      run: uv run ruff check
+
+    - name: Run Pytest
+      working-directory: ./zero-tensor-py
+      run: uv run pytest
 
     - name: Set up Rust toolchain
       uses: dtolnay/rust-toolchain@stable
@@ -26,11 +48,14 @@ jobs:
     - name: Enable Rust caching
       uses: swatinem/rust-cache@v2
 
-    - name: Check formatting
+    - name: Check Rust formatting
       run: cargo fmt --check
 
     - name: Run Clippy lints
       run: cargo clippy -- -D warnings
 
-    - name: Run library tests
+    - name: Run Rust unit tests
       run: cargo test --lib
+
+    - name: Run Rust integration tests
+      run: cargo test --test integration_producer

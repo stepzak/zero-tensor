@@ -38,7 +38,7 @@ pub enum ZTBufErr {
 #[inline]
 pub fn get_dt_size(dt: TensorDT) -> usize {
     match dt {
-        TensorDT::B => size_of::<u8>(),
+        TensorDT::U8 => size_of::<u8>(),
         TensorDT::BF16 => size_of::<i16>(),
         TensorDT::F16 => size_of::<i16>(),
         TensorDT::F32 => size_of::<f32>(),

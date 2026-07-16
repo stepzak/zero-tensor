@@ -2,10 +2,6 @@ pub mod buffer;
 pub mod dataset;
 pub mod producer;
 
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
-}
-
 #[cfg(test)]
 mod tests {
     use std::io::{Read, Write};
@@ -30,7 +26,7 @@ mod tests {
         }
 
         fn is_empty(&self) -> bool {
-            self.len > 0
+            self.len == 0
         }
 
         fn get_item(&self, idx: usize) -> Option<(Vec<u8>, TensorItemMeta)> {

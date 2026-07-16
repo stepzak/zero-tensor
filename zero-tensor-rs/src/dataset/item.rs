@@ -8,7 +8,7 @@ pub enum TensorDT {
     I8,
     I32,
     I64,
-    B,
+    U8,
 }
 
 pub type ShapeType = u32;

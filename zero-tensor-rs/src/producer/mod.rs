@@ -6,10 +6,11 @@ use crate::{
     },
 };
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
+use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::{
     fs,
-    io::{self, Read, Write},
+    io::{self, Write},
     os::unix::net::{UnixListener, UnixStream},
 };
 use thiserror::Error;
@@ -70,7 +71,8 @@ impl ZeroTensorProducer {
         batch_size: usize,
         stream: &mut UnixStream,
     ) -> Result<(), ZTProducerErr> {
-        let mut buf = vec![0; CONSUMER_RESP_BUFFER];
+        let mut buf = String::with_capacity(CONSUMER_RESP_BUFFER);
+        let mut reader = BufReader::new(stream.try_clone().map_err(ZTProducerErr::IoError)?);
         loop {
             if self.current_step == self.steps {
                 return Ok(());
@@ -132,10 +134,16 @@ impl ZeroTensorProducer {
                 .map_err(ZTProducerErr::IoError)?;
             stream.flush().map_err(ZTProducerErr::IoError)?;
 
-            let n = stream.read(&mut buf).map_err(ZTProducerErr::IoError)?;
-            let response = std::str::from_utf8(&buf[..n]).unwrap_or("");
-            if !response.starts_with("RELEASE") {
-                panic!("Unexpected protocol violation from consumer: {}", response);
+            match reader.read_line(&mut buf) {
+                Ok(0) => return Ok(()),
+                Ok(_) => {
+                    let trimmed = buf.trim();
+                    if trimmed != "RELEASE" {
+                        panic!("Unexpected protocol violation from consumer: '{}'", trimmed);
+                    }
+                    buf.clear();
+                }
+                Err(e) => return Err(ZTProducerErr::IoError(e)),
             }
 
             self.current_step += 1;
@@ -149,8 +157,7 @@ impl ZeroTensorProducer {
     ) -> Result<(), ZTProducerErr> {
         self.current_step = 0;
 
-        let (mut stream, addr) = self.listener.accept().map_err(ZTProducerErr::IoError)?;
-        dbg!(format!("Accepted {addr:?}"));
+        let (mut stream, _) = self.listener.accept().map_err(ZTProducerErr::IoError)?;
         self.start_streaming_loop(dataset, batch_size, &mut stream)
     }
 }
