@@ -14,8 +14,8 @@ use std::{
 };
 use thiserror::Error;
 
-const DEFAULT_SLOTS: usize = 2;
-const PYTHON_RESP_BUFFER: usize = b"RELEASE".len() * 2;
+pub const DEFAULT_SLOTS: usize = 2;
+pub const CONSUMER_RESP_BUFFER: usize = b"RELEASE".len() * 2;
 
 pub struct ZeroTensorProducer {
     buffer: ZeroTensorBuffer,
@@ -70,7 +70,7 @@ impl ZeroTensorProducer {
         batch_size: usize,
         stream: &mut UnixStream,
     ) -> Result<(), ZTProducerErr> {
-        let mut buf = vec![0; PYTHON_RESP_BUFFER];
+        let mut buf = vec![0; CONSUMER_RESP_BUFFER];
         loop {
             if self.current_step == self.steps {
                 return Ok(());

@@ -1,5 +1,5 @@
 #[repr(u8)]
-#[derive(Clone, Copy, std::fmt::Debug)]
+#[derive(Clone, Copy, std::fmt::Debug, PartialEq)]
 pub enum TensorDT {
     F16,
     F32,
