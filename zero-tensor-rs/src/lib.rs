@@ -8,16 +8,16 @@ pub fn add(left: u64, right: u64) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use std::thread;
-    use std::time::Duration;
     use std::io::{Read, Write};
     use std::os::unix::net::UnixStream;
+    use std::thread;
+    use std::time::Duration;
     use tempfile::tempdir;
 
     use crate::buffer::buffer::ZeroTensorBuffer;
-use crate::dataset::dataset::ZeroTensorDataset;
-    use crate::dataset::item::{TensorItemMeta, TensorDT, ShapeType, StrideType};
     use crate::buffer::tensor_meta::TensorHeader;
+    use crate::dataset::dataset::ZeroTensorDataset;
+    use crate::dataset::item::{ShapeType, StrideType, TensorDT, TensorItemMeta};
     use crate::producer::producer::{CONSUMER_RESP_BUFFER, ZeroTensorProducer};
 
     struct NonContiguousMockDataset {
@@ -38,13 +38,13 @@ use crate::dataset::dataset::ZeroTensorDataset;
             let strides = vec![3, 1];
             let dt = TensorDT::F32;
 
-            let total_elements = 6; 
+            let total_elements = 6;
             let mut raw_data = vec![0u8; total_elements * 4];
 
             let f32_slice = unsafe {
                 std::slice::from_raw_parts_mut(raw_data.as_mut_ptr() as *mut f32, total_elements)
             };
-            
+
             f32_slice[0] = idx as f32;
             f32_slice[3] = idx as f32 + 0.5;
 
@@ -63,15 +63,12 @@ use crate::dataset::dataset::ZeroTensorDataset;
         let steps = 2;
         let slot_size = 2048;
 
-        let dataset = NonContiguousMockDataset { len: batch_size * steps };
+        let dataset = NonContiguousMockDataset {
+            len: batch_size * steps,
+        };
 
-        let mut producer = ZeroTensorProducer::new(
-            steps,
-            slot_size,
-            shm_name,
-            &socket_path,
-            None
-        ).expect("Failed to init producer");
+        let mut producer = ZeroTensorProducer::new(steps, slot_size, shm_name, &socket_path, None)
+            .expect("Failed to init producer");
 
         let consumer_socket = socket_path.clone();
         let consumer_shm_name = shm_name.to_string();
@@ -88,7 +85,9 @@ use crate::dataset::dataset::ZeroTensorDataset;
             let mut sock_buf = [0; CONSUMER_RESP_BUFFER];
 
             for step in 0..steps {
-                let n = stream.read(&mut sock_buf).expect("Failed to read from socket");
+                let n = stream
+                    .read(&mut sock_buf)
+                    .expect("Failed to read from socket");
                 let msg = std::str::from_utf8(&sock_buf[..n]).unwrap();
                 assert!(msg.starts_with("READY"));
 
@@ -112,17 +111,19 @@ use crate::dataset::dataset::ZeroTensorDataset;
                 assert_eq!(header.ndims(), 3);
                 assert_eq!(header.dt(), TensorDT::F32);
 
-                let shape_ptr = unsafe { slot_bytes.as_ptr().add(offs.shapes()) as *const ShapeType };
+                let shape_ptr =
+                    unsafe { slot_bytes.as_ptr().add(offs.shapes()) as *const ShapeType };
                 let read_shape = unsafe { std::slice::from_raw_parts(shape_ptr, 3) };
                 assert_eq!(read_shape, &[batch_size as ShapeType, 2, 3]);
 
-                let strides_ptr = unsafe { slot_bytes.as_ptr().add(offs.strides()) as *const StrideType };
+                let strides_ptr =
+                    unsafe { slot_bytes.as_ptr().add(offs.strides()) as *const StrideType };
                 let read_strides = unsafe { std::slice::from_raw_parts(strides_ptr, 3) };
-                
+
                 assert_eq!(read_strides, &[24, 12, 4]);
 
                 let data_ptr = unsafe { slot_bytes.as_ptr().add(offs.data()) as *const f32 };
-                
+
                 let idx_0 = step * batch_size;
 
                 assert_eq!(unsafe { *data_ptr }, idx_0 as f32);
@@ -130,12 +131,16 @@ use crate::dataset::dataset::ZeroTensorDataset;
 
                 thread::sleep(Duration::from_millis(10));
 
-                stream.write_all(b"RELEASE\n").expect("Failed to write RELEASE");
+                stream
+                    .write_all(b"RELEASE\n")
+                    .expect("Failed to write RELEASE");
                 stream.flush().unwrap();
             }
         });
 
-        producer.start_streaming(&dataset, batch_size).expect("Streaming failed");
+        producer
+            .start_streaming(&dataset, batch_size)
+            .expect("Streaming failed");
 
         consumer_handle.join().expect("Consumer thread panicked");
     }

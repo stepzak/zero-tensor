@@ -15,7 +15,7 @@ pub struct ZeroTensorBuffer {
     total_size: usize,
     shm_filename: CString,
     fd: i32,
-    is_owner: bool
+    is_owner: bool,
 }
 
 #[derive(Error, Debug)]
@@ -97,7 +97,6 @@ impl ZeroTensorBuffer {
     }
 
     pub fn new(name: &str, total_size: usize) -> Result<Self, ZTBufErr> {
-
         let oflag = libc::O_CREAT | libc::O_RDWR;
         let mode = 0o666;
 
@@ -114,7 +113,7 @@ impl ZeroTensorBuffer {
             total_size,
             fd,
             shm_filename: cname,
-            is_owner: true
+            is_owner: true,
         })
     }
 
@@ -129,9 +128,13 @@ impl ZeroTensorBuffer {
         let flags = libc::MAP_SHARED;
 
         let addr = Self::mmap(fd, total_size, prot, flags)? as *mut u8;
-        Ok(
-            ZeroTensorBuffer { addr, total_size, shm_filename: cname, fd, is_owner: false }
-        )
+        Ok(ZeroTensorBuffer {
+            addr,
+            total_size,
+            shm_filename: cname,
+            fd,
+            is_owner: false,
+        })
     }
 
     ///Strides must be in bytes!
@@ -144,7 +147,11 @@ impl ZeroTensorBuffer {
         raw_data: &[u8],
     ) {
         let ndims = shape.len() as u8;
-        assert_eq!(strides.len(), ndims as usize, "Strides length must match shape dimensions");
+        assert_eq!(
+            strides.len(),
+            ndims as usize,
+            "Strides length must match shape dimensions"
+        );
         let meta = TensorHeader::new(dt, ndims);
         let base = unsafe { self.addr.add(offset) };
         let offs = meta.get_offsets();
@@ -173,8 +180,6 @@ impl ZeroTensorBuffer {
         }
     }
 
-   
-   
     pub unsafe fn get_item_slice_mut(
         &mut self,
         slot_offset: usize,
@@ -193,36 +198,32 @@ impl ZeroTensorBuffer {
         &self,
         slot_offset: usize,
         data_offset_in_slot: usize,
-        len: usize
+        len: usize,
     ) -> &[u8] {
-        assert!(slot_offset + data_offset_in_slot + len <= self.total_size,
-                "Slice out of bounds"
+        assert!(
+            slot_offset + data_offset_in_slot + len <= self.total_size,
+            "Slice out of bounds"
         );
         let ptr = unsafe { self.addr.add(slot_offset).add(data_offset_in_slot) };
         unsafe { std::slice::from_raw_parts(ptr, len) }
     }
 
-    pub fn get_slot_slice(
-        &self,
-        slot_offset: usize,
-        slot_size: usize
-    ) -> &[u8] {
-        assert!(slot_offset + slot_size <= self.total_size,
-        "Slice out of bounds"
+    pub fn get_slot_slice(&self, slot_offset: usize, slot_size: usize) -> &[u8] {
+        assert!(
+            slot_offset + slot_size <= self.total_size,
+            "Slice out of bounds"
         );
         let ptr = unsafe { self.addr.add(slot_offset) };
         unsafe { std::slice::from_raw_parts(ptr, slot_size) }
     }
-
-
 }
 
 impl Drop for ZeroTensorBuffer {
     fn drop(&mut self) {
         if !self.addr.is_null() {
-            unsafe { 
+            unsafe {
                 libc::munmap(self.addr as *mut c_void, self.total_size);
-             }
+            }
         }
         if self.is_owner {
             unsafe {
