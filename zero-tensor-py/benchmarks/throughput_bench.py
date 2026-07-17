@@ -3,8 +3,6 @@ import time
 import torch
 from zero_tensor_py import ZeroTensorConsumer
 
-import torch
-import time
 
 ELEMENT_SHAPE = (3, 512, 512) 
 BATCH_SIZE = 32
