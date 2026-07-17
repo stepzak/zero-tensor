@@ -176,9 +176,11 @@ impl ZeroTensorBuffer {
             ptr::copy_nonoverlapping(strides.as_ptr(), strides_ptr, ndims as usize);
         }
 
-        let data_ptr = unsafe { base.add(offs.data()) };
-        unsafe {
-            ptr::copy_nonoverlapping(raw_data.as_ptr(), data_ptr, data_size);
+        if !raw_data.is_empty() {
+            let data_ptr = unsafe { base.add(offs.data()) };
+            unsafe {
+                ptr::copy_nonoverlapping(raw_data.as_ptr(), data_ptr, data_size);
+            }
         }
     }
 

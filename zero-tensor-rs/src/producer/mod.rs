@@ -1,17 +1,20 @@
 use crate::{
-    buffer::{ZTBufErr, ZeroTensorBuffer, get_dt_size},
+    buffer::{ZTBufErr, ZeroTensorBuffer, get_dt_size, tensor_meta::TensorHeader},
     dataset::{
         ZeroTensorDataset,
-        item::{ShapeType, StrideType, TensorItemMeta},
+        item::{ShapeType, StrideType},
     },
 };
-use rayon::iter::{IntoParallelIterator, ParallelIterator};
-use std::io::{BufRead, BufReader};
+use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
 use std::path::Path;
 use std::{
     fs,
     io::{self, Write},
     os::unix::net::{UnixListener, UnixStream},
+};
+use std::{
+    io::{BufRead, BufReader},
+    path::PathBuf,
 };
 use thiserror::Error;
 
@@ -25,6 +28,7 @@ pub struct ZeroTensorProducer {
     steps: usize,
     nslots: usize,
     listener: UnixListener,
+    sock_path: PathBuf,
 }
 
 #[derive(Debug, Error)]
@@ -43,6 +47,7 @@ impl ZeroTensorProducer {
         shm_filename: &str,
         socket_addr: P,
         num_slots: N,
+        overwrite_socket: bool,
     ) -> Result<Self, ZTProducerErr> {
         let nslots = num_slots.into().unwrap_or(DEFAULT_SLOTS);
         let total_size = nslots * step_size;
@@ -51,7 +56,13 @@ impl ZeroTensorProducer {
 
         let path = socket_addr.as_ref();
         if path.exists() {
-            fs::remove_file(path).map_err(ZTProducerErr::IoError)?;
+            if overwrite_socket {
+                fs::remove_file(path).map_err(ZTProducerErr::IoError)?;
+            } else {
+                return Err(ZTProducerErr::IoError(io::Error::from(
+                    io::ErrorKind::AddrInUse,
+                )));
+            }
         }
         let listener = UnixListener::bind(path).map_err(ZTProducerErr::IoError)?;
 
@@ -62,6 +73,7 @@ impl ZeroTensorProducer {
             current_step: 0,
             listener,
             nslots,
+            sock_path: path.into(),
         })
     }
 
@@ -73,6 +85,7 @@ impl ZeroTensorProducer {
     ) -> Result<(), ZTProducerErr> {
         let mut buf = String::with_capacity(CONSUMER_RESP_BUFFER);
         let mut reader = BufReader::new(stream.try_clone().map_err(ZTProducerErr::IoError)?);
+
         loop {
             if self.current_step == self.steps {
                 return Ok(());
@@ -84,24 +97,20 @@ impl ZeroTensorProducer {
                 return Ok(());
             }
             let idxs = start_idx..end_idx;
+            let current_batch_size = end_idx - start_idx;
 
-            let items: Vec<(Vec<u8>, TensorItemMeta)> = idxs
-                .into_par_iter()
-                .map(|i| {
-                    dataset.get_item(i).unwrap_or_else(|| {
-                        panic!("Failed to get item {i} from dataset");
-                    })
-                })
-                .collect();
+            let (_, first_meta) = dataset.get_item(start_idx).unwrap_or_else(|| {
+                panic!("Failed to get first item of batch to extract metadata");
+            });
 
-            let meta = &items[0].1;
-            let dt = meta.dt();
-            let mut batch_shape = vec![items.len() as ShapeType];
-            batch_shape.extend_from_slice(meta.shape());
+            let dt = first_meta.dt();
+            let ndims = (first_meta.shape().len() + 1) as u8;
 
-            let element_strides = meta.strides();
+            let mut batch_shape = vec![current_batch_size as ShapeType];
+            batch_shape.extend_from_slice(first_meta.shape());
 
-            let element_size_elements = meta
+            let element_strides = first_meta.strides();
+            let element_size_elements = first_meta
                 .shape()
                 .iter()
                 .zip(element_strides.iter())
@@ -110,23 +119,39 @@ impl ZeroTensorProducer {
                 + 1;
 
             let element_size_bytes = element_size_elements as usize * get_dt_size(dt);
-
             let mut batch_strides = vec![element_size_bytes as StrideType];
 
             let mut converted_element_strides = element_strides.to_vec();
             for stride in &mut converted_element_strides {
                 *stride *= get_dt_size(dt) as StrideType;
             }
-
             batch_strides.extend_from_slice(&converted_element_strides);
 
-            let mut raw_batch_data = Vec::with_capacity(items.iter().map(|x| x.0.len()).sum());
-            for (raw_data, _) in items {
-                raw_batch_data.extend_from_slice(&raw_data);
-            }
+            let header_meta = TensorHeader::new(dt, ndims);
+            let offs = header_meta.get_offsets();
+            let data_start_offset = offs.data();
 
             self.buffer
-                .write_tensor(offset, &batch_shape, &batch_strides, dt, &raw_batch_data);
+                .write_tensor(offset, &batch_shape, &batch_strides, dt, &[]);
+
+            let total_data_bytes = current_batch_size * element_size_bytes;
+
+            let raw_shm_slice = unsafe {
+                self.buffer
+                    .get_item_slice_mut(offset, data_start_offset, total_data_bytes)
+            };
+
+            let shm_chunks: Vec<&mut [u8]> = raw_shm_slice.chunks_mut(element_size_bytes).collect();
+
+            idxs.into_par_iter()
+                .zip(shm_chunks)
+                .for_each(|(i, shm_chunk)| {
+                    let (raw_data, _) = dataset.get_item(i).unwrap_or_else(|| {
+                        panic!("Failed to get item {i} from dataset");
+                    });
+
+                    shm_chunk[..raw_data.len()].copy_from_slice(&raw_data);
+                });
 
             let msg = format!("READY {}\n", offset);
             stream
@@ -159,5 +184,13 @@ impl ZeroTensorProducer {
 
         let (mut stream, _) = self.listener.accept().map_err(ZTProducerErr::IoError)?;
         self.start_streaming_loop(dataset, batch_size, &mut stream)
+    }
+}
+
+impl Drop for ZeroTensorProducer {
+    fn drop(&mut self) {
+        if self.sock_path.exists() {
+            _ = fs::remove_file(&self.sock_path);
+        }
     }
 }

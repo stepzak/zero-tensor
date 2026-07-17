@@ -67,8 +67,9 @@ mod tests {
             len: batch_size * steps,
         };
 
-        let mut producer = ZeroTensorProducer::new(steps, slot_size, shm_name, &socket_path, None)
-            .expect("Failed to init producer");
+        let mut producer =
+            ZeroTensorProducer::new(steps, slot_size, shm_name, &socket_path, None, false)
+                .expect("Failed to init producer");
 
         let consumer_socket = socket_path.clone();
         let consumer_shm_name = shm_name.to_string();

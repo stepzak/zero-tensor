@@ -4,8 +4,10 @@ use std::time::Duration;
 use tempfile::tempdir;
 
 use zero_tensor_lib::{
-    dataset::ZeroTensorDataset,
-    dataset::item::{TensorDT, TensorItemMeta},
+    dataset::{
+        ZeroTensorDataset,
+        item::{TensorDT, TensorItemMeta},
+    },
     producer::ZeroTensorProducer,
 };
 
@@ -60,8 +62,9 @@ fn test_rust_producer_python_consumer_e2e() {
         len: batch_size * steps,
     };
 
-    let mut producer = ZeroTensorProducer::new(steps, slot_size, shm_name, &socket_path, None)
-        .expect("Failed to initialize Rust producer");
+    let mut producer =
+        ZeroTensorProducer::new(steps, slot_size, shm_name, &socket_path, None, false)
+            .expect("Failed to initialize Rust producer");
 
     let consumer_socket = socket_path.clone();
     let consumer_shm = shm_name.to_string();
