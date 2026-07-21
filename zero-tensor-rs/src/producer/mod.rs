@@ -6,20 +6,29 @@ use crate::{
     },
 };
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
-use std::path::Path;
 use std::{
     fs,
     io::{self, Write},
     os::unix::net::{UnixListener, UnixStream},
+    thread,
+    time::Duration,
 };
 use std::{
     io::{BufRead, BufReader},
     path::PathBuf,
 };
+use std::{
+    path::Path,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 use thiserror::Error;
 
 pub const DEFAULT_SLOTS: usize = 2;
 pub const CONSUMER_RESP_BUFFER: usize = b"RELEASE".len() * 2;
+pub const DEFAULT_TIMEOUT_CHECK_CTRLC: u64 = 500;
 
 pub struct ZeroTensorProducer {
     buffer: ZeroTensorBuffer,
@@ -29,6 +38,8 @@ pub struct ZeroTensorProducer {
     nslots: usize,
     listener: UnixListener,
     sock_path: PathBuf,
+    running: Arc<AtomicBool>,
+    read_timeout: Option<u64>,
 }
 
 #[derive(Debug, Error)]
@@ -41,14 +52,22 @@ pub enum ZTProducerErr {
 }
 
 impl ZeroTensorProducer {
-    pub fn new<P: AsRef<Path>, N: Into<Option<usize>>>(
+    pub fn new<P: AsRef<Path>, N: Into<Option<usize>>, R: Into<Option<u64>>>(
         steps: usize,
         step_size: usize,
         shm_filename: &str,
         socket_addr: P,
         num_slots: N,
+        read_timeout: R,
         overwrite_socket: bool,
     ) -> Result<Self, ZTProducerErr> {
+        let running = Arc::new(AtomicBool::new(true));
+        let rclone = running.clone();
+        let _ = ctrlc::set_handler(move || {
+            println!("Handler worked");
+            rclone.store(false, Ordering::SeqCst);
+        });
+
         let nslots = num_slots.into().unwrap_or(DEFAULT_SLOTS);
         let total_size = nslots * step_size;
         let buffer = ZeroTensorBuffer::new(shm_filename, total_size)
@@ -74,6 +93,8 @@ impl ZeroTensorProducer {
             listener,
             nslots,
             sock_path: path.into(),
+            read_timeout: read_timeout.into(),
+            running,
         })
     }
 
@@ -84,9 +105,20 @@ impl ZeroTensorProducer {
         stream: &mut UnixStream,
     ) -> Result<(), ZTProducerErr> {
         let mut buf = String::with_capacity(CONSUMER_RESP_BUFFER);
+        let timeout = std::cmp::min(
+            DEFAULT_TIMEOUT_CHECK_CTRLC,
+            self.read_timeout.unwrap_or(DEFAULT_TIMEOUT_CHECK_CTRLC),
+        );
         let mut reader = BufReader::new(stream.try_clone().map_err(ZTProducerErr::IoError)?);
-
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_millis(timeout)))
+            .map_err(ZTProducerErr::IoError)?;
         loop {
+            if !self.running.load(Ordering::SeqCst) {
+                return Err(ZTProducerErr::IoError(io::Error::from(
+                    io::ErrorKind::Interrupted,
+                )));
+            }
             if self.current_step == self.steps {
                 return Ok(());
             }
@@ -143,32 +175,67 @@ impl ZeroTensorProducer {
 
             let shm_chunks: Vec<&mut [u8]> = raw_shm_slice.chunks_mut(element_size_bytes).collect();
 
-            idxs.into_par_iter()
-                .zip(shm_chunks)
-                .for_each(|(i, shm_chunk)| {
-                    let (raw_data, _) = dataset.get_item(i).unwrap_or_else(|| {
-                        panic!("Failed to get item {i} from dataset");
-                    });
-
-                    shm_chunk[..raw_data.len()].copy_from_slice(&raw_data);
+            let interrupted = idxs.into_par_iter().zip(shm_chunks).any(|(i, shm_chunk)| {
+                if !self.running.load(Ordering::SeqCst) {
+                    return true;
+                }
+                let (raw_data, _) = dataset.get_item(i).unwrap_or_else(|| {
+                    panic!("Failed to get item {i} from dataset");
                 });
+
+                if !self.running.load(Ordering::SeqCst) {
+                    return true;
+                }
+
+                shm_chunk[..raw_data.len()].copy_from_slice(&raw_data);
+
+                false
+            });
+
+            if interrupted {
+                return Err(ZTProducerErr::IoError(io::Error::from(
+                    io::ErrorKind::Interrupted,
+                )));
+            }
 
             let msg = format!("READY {}\n", offset);
             stream
                 .write_all(msg.as_bytes())
                 .map_err(ZTProducerErr::IoError)?;
             stream.flush().map_err(ZTProducerErr::IoError)?;
-
-            match reader.read_line(&mut buf) {
-                Ok(0) => return Ok(()),
-                Ok(_) => {
-                    let trimmed = buf.trim();
-                    if trimmed != "RELEASE" {
-                        panic!("Unexpected protocol violation from consumer: '{}'", trimmed);
-                    }
-                    buf.clear();
+            let start_time = std::time::Instant::now();
+            loop {
+                if !self.running.load(Ordering::SeqCst) {
+                    return Err(ZTProducerErr::IoError(io::Error::from(
+                        io::ErrorKind::Interrupted,
+                    )));
                 }
-                Err(e) => return Err(ZTProducerErr::IoError(e)),
+
+                match reader.read_line(&mut buf) {
+                    Ok(0) => return Ok(()),
+                    Ok(_) => {
+                        let trimmed = buf.trim();
+                        if trimmed != "RELEASE" {
+                            panic!("Unexpected protocol violation from consumer: '{}'", trimmed);
+                        }
+                        buf.clear();
+                        break;
+                    }
+                    Err(e)
+                        if e.kind() == io::ErrorKind::WouldBlock
+                            || e.kind() == io::ErrorKind::TimedOut =>
+                    {
+                        let el = start_time.elapsed();
+                        if let Some(rt) = self.read_timeout
+                            && el.as_millis() >= rt as u128
+                        {
+                            return Err(ZTProducerErr::IoError(e));
+                        }
+
+                        continue;
+                    }
+                    Err(e) => return Err(ZTProducerErr::IoError(e)),
+                }
             }
 
             self.current_step += 1;
@@ -181,9 +248,37 @@ impl ZeroTensorProducer {
         batch_size: usize,
     ) -> Result<(), ZTProducerErr> {
         self.current_step = 0;
+        self.listener
+            .set_nonblocking(true)
+            .map_err(ZTProducerErr::IoError)?;
 
-        let (mut stream, _) = self.listener.accept().map_err(ZTProducerErr::IoError)?;
-        self.start_streaming_loop(dataset, batch_size, &mut stream)
+        let poll_interval = Duration::from_millis(DEFAULT_TIMEOUT_CHECK_CTRLC);
+
+        loop {
+            if !self.running.load(Ordering::SeqCst) {
+                return Err(ZTProducerErr::IoError(io::Error::from(
+                    io::ErrorKind::Interrupted,
+                )));
+            }
+
+            let mut stream = match self.listener.accept() {
+                Ok((stream, _addr)) => {
+                    stream
+                        .set_nonblocking(false)
+                        .map_err(ZTProducerErr::IoError)?;
+                    stream
+                }
+                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    thread::sleep(poll_interval);
+                    continue;
+                }
+                Err(e) => {
+                    return Err(ZTProducerErr::IoError(e));
+                }
+            };
+
+            return self.start_streaming_loop(dataset, batch_size, &mut stream);
+        }
     }
 }
 

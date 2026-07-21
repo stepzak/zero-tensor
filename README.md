@@ -61,6 +61,7 @@ fn main() -> std::io::Result<()> {
         slot_size,
         "zt_shared_buffer",
         Path::new("/tmp/zt.sock"),
+        None,
         true, // overwrite: automatically clean up zombie sockets on startup
     )?;
 
