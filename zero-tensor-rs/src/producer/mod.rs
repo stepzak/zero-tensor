@@ -227,9 +227,10 @@ impl ZeroTensorProducer {
                     {
                         let el = start_time.elapsed();
                         if let Some(rt) = self.read_timeout
-                            && el.as_millis() >= rt as u128 {
-                                return Err(ZTProducerErr::IoError(e));
-                            }
+                            && el.as_millis() >= rt as u128
+                        {
+                            return Err(ZTProducerErr::IoError(e));
+                        }
 
                         continue;
                     }
