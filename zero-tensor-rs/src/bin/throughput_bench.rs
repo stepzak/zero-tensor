@@ -66,6 +66,7 @@ fn main() {
         shm_name,
         socket_path,
         None,
+        None,
         false,
     )
     .expect("Failed to create producer");

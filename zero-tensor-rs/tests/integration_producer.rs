@@ -63,7 +63,7 @@ fn test_rust_producer_python_consumer_e2e() {
     };
 
     let mut producer =
-        ZeroTensorProducer::new(steps, slot_size, shm_name, &socket_path, None, false)
+        ZeroTensorProducer::new(steps, slot_size, shm_name, &socket_path, None, None, false)
             .expect("Failed to initialize Rust producer");
 
     let consumer_socket = socket_path.clone();

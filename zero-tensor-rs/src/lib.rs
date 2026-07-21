@@ -6,6 +6,7 @@ pub mod producer;
 mod tests {
     use std::io::{Read, Write};
     use std::os::unix::net::UnixStream;
+    use std::path::PathBuf;
     use std::thread;
     use std::time::Duration;
     use tempfile::tempdir;
@@ -68,7 +69,7 @@ mod tests {
         };
 
         let mut producer =
-            ZeroTensorProducer::new(steps, slot_size, shm_name, &socket_path, None, false)
+            ZeroTensorProducer::new(steps, slot_size, shm_name, &socket_path, None, None, false)
                 .expect("Failed to init producer");
 
         let consumer_socket = socket_path.clone();
@@ -144,5 +145,57 @@ mod tests {
             .expect("Streaming failed");
 
         consumer_handle.join().expect("Consumer thread panicked");
+    }
+
+    #[test]
+    fn test_raii_producer_cleans_up_socket_on_drop() {
+        let dir = tempdir().unwrap();
+        let sock_path = dir.path().join("integration_test.sock");
+        let shm_name = "zt_integration_test_shm";
+
+        {
+            let _ = ZeroTensorProducer::new(10, 4096, shm_name, &sock_path, 2, Some(1000), true)
+                .expect("Failed to create producer");
+        }
+
+        assert!(
+            !sock_path.exists(),
+            "Socket file must be unlinked after producer is dropped"
+        );
+
+        #[cfg(target_os = "linux")]
+        {
+            let shm_path = PathBuf::from(format!("/dev/shm/{}", shm_name));
+            assert!(
+                !shm_path.exists(),
+                "Shared memory segment should be unlinked on drop"
+            );
+        }
+    }
+
+    #[test]
+    fn test_raii_cleanup_on_panic() {
+        let dir = tempdir().unwrap();
+        let sock_path = dir.path().join("integration_test.sock");
+        let shm_name = "zt_integration_test_shm";
+
+        let handle = std::thread::spawn({
+            let sock_path = sock_path.clone();
+            move || {
+                let _producer =
+                    ZeroTensorProducer::new(10, 4096, shm_name, &sock_path, 2, Some(1000), true)
+                        .unwrap();
+
+                assert!(sock_path.exists());
+                panic!("Simulated worker panic inside task!");
+            }
+        });
+
+        let _ = handle.join();
+
+        assert!(
+            !sock_path.exists(),
+            "Socket should be cleaned up even after panic unwinding"
+        );
     }
 }
