@@ -19,7 +19,7 @@ fn test_cleanup_on_intercept() {
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .spawn()
-        .expect("Не удалось запустить бинарник напрямую");
+        .expect("Failed to run executable");
 
     thread::sleep(Duration::from_millis(500));
 
