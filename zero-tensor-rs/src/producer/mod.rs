@@ -139,7 +139,6 @@ impl ZeroTensorProducer {
                 return Ok(());
             }
 
-            // 1. Управление эпохами и shuffle
             let step_epoch = self.current_step / steps_per_epoch;
             if step_epoch != current_epoch {
                 current_epoch = step_epoch;
