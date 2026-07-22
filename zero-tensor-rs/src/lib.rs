@@ -15,7 +15,7 @@ mod tests {
     use crate::buffer::tensor_meta::TensorHeader;
     use crate::dataset::ZeroTensorDataset;
     use crate::dataset::item::{ShapeType, StrideType, TensorDT, TensorItemMeta};
-    use crate::producer::{CONSUMER_RESP_BUFFER, ZeroTensorProducer};
+    use crate::producer::{CONSUMER_RESP_BUFFER, ZeroTensorProducerBuilder};
 
     struct NonContiguousMockDataset {
         len: usize,
@@ -68,9 +68,9 @@ mod tests {
             len: batch_size * steps,
         };
 
-        let mut producer =
-            ZeroTensorProducer::new(steps, slot_size, shm_name, &socket_path, None, None, false)
-                .expect("Failed to init producer");
+        let mut producer = ZeroTensorProducerBuilder::new(steps, slot_size, shm_name, &socket_path)
+            .build()
+            .expect("Failed to init producer");
 
         let consumer_socket = socket_path.clone();
         let consumer_shm_name = shm_name.to_string();
@@ -154,7 +154,10 @@ mod tests {
         let shm_name = "zt_integration_test_shm";
 
         {
-            let _ = ZeroTensorProducer::new(10, 4096, shm_name, &sock_path, 2, Some(1000), true)
+            let _ = ZeroTensorProducerBuilder::new(10, 4096, shm_name, &sock_path)
+                .overwrite_socket(true)
+                .read_timeout(1000)
+                .build()
                 .expect("Failed to create producer");
         }
 
@@ -182,9 +185,10 @@ mod tests {
         let handle = std::thread::spawn({
             let sock_path = sock_path.clone();
             move || {
-                let _producer =
-                    ZeroTensorProducer::new(10, 4096, shm_name, &sock_path, 2, Some(1000), true)
-                        .unwrap();
+                let _producer = ZeroTensorProducerBuilder::new(10, 4096, shm_name, &sock_path)
+                    .read_timeout(1000)
+                    .build()
+                    .unwrap();
 
                 assert!(sock_path.exists());
                 panic!("Simulated worker panic inside task!");
@@ -196,6 +200,42 @@ mod tests {
         assert!(
             !sock_path.exists(),
             "Socket should be cleaned up even after panic unwinding"
+        );
+    }
+
+    #[test]
+    fn test_shuffle_determinism_with_seed() {
+        let seed = Some(1337);
+        let len = 1000;
+
+        let mut indices1: Vec<usize> = (0..len).collect();
+        let mut rng1 = fastrand::Rng::with_seed(seed.unwrap());
+        rng1.shuffle(&mut indices1);
+
+        let mut indices2: Vec<usize> = (0..len).collect();
+        let mut rng2 = fastrand::Rng::with_seed(seed.unwrap());
+        rng2.shuffle(&mut indices2);
+
+        assert_eq!(
+            indices1, indices2,
+            "Shuffled indices must be identical with the same seed"
+        );
+    }
+
+    #[test]
+    fn test_shuffle_differs_across_epochs() {
+        let base_seed = 42u64;
+        let len = 100;
+
+        let mut epoch0: Vec<usize> = (0..len).collect();
+        fastrand::Rng::with_seed(base_seed).shuffle(&mut epoch0);
+
+        let mut epoch1: Vec<usize> = (0..len).collect();
+        fastrand::Rng::with_seed(base_seed + 1).shuffle(&mut epoch1);
+
+        assert_ne!(
+            epoch0, epoch1,
+            "Epochs must have different shuffle patterns"
         );
     }
 }
