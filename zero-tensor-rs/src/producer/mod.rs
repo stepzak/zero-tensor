@@ -120,7 +120,6 @@ impl ZeroTensorProducerBuilder {
         let rclone = running.clone();
 
         let _ = ctrlc::set_handler(move || {
-            println!("Handler worked");
             rclone.store(false, Ordering::SeqCst);
         });
 

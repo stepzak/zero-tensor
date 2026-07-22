@@ -22,7 +22,6 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
-
       - name: Enable Rust caching
         uses: swatinem/rust-cache@v2
 
@@ -31,12 +30,12 @@ jobs:
 
       - name: Run Clippy lints
         run: cargo clippy -- -D warnings
+      
+      - name: Build Rust Dev
+        run: cargo build
 
-      - name: Run Rust unit tests
-        run: cargo test --lib
-
-      - name: Run Rust integration tests
-        run: cargo test --test integration_producer
+      - name: Run Rust tests
+        run: cargo test
 
   python-checks:
     name: Python Quality & Tests (Py ${{ matrix.python-version }})
