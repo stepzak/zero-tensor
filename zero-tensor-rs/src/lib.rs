@@ -15,7 +15,7 @@ mod tests {
     use crate::buffer::tensor_meta::TensorHeader;
     use crate::dataset::ZeroTensorDataset;
     use crate::dataset::item::{ShapeType, StrideType, TensorDT, TensorItemMeta};
-    use crate::producer::{CONSUMER_RESP_BUFFER, ZeroTensorProducer};
+    use crate::producer::{CONSUMER_RESP_BUFFER, ZeroTensorProducerBuilder};
 
     struct NonContiguousMockDataset {
         len: usize,
@@ -68,18 +68,9 @@ mod tests {
             len: batch_size * steps,
         };
 
-        let mut producer = ZeroTensorProducer::new(
-            steps,
-            slot_size,
-            shm_name,
-            &socket_path,
-            None,
-            None,
-            false,
-            false,
-            None,
-        )
-        .expect("Failed to init producer");
+        let mut producer = ZeroTensorProducerBuilder::new(steps, slot_size, shm_name, &socket_path)
+            .build()
+            .expect("Failed to init producer");
 
         let consumer_socket = socket_path.clone();
         let consumer_shm_name = shm_name.to_string();
@@ -163,18 +154,11 @@ mod tests {
         let shm_name = "zt_integration_test_shm";
 
         {
-            let _ = ZeroTensorProducer::new(
-                10,
-                4096,
-                shm_name,
-                &sock_path,
-                2,
-                Some(1000),
-                true,
-                false,
-                None,
-            )
-            .expect("Failed to create producer");
+            let _ = ZeroTensorProducerBuilder::new(10, 4096, shm_name, &sock_path)
+                .overwrite_socket(true)
+                .read_timeout(1000)
+                .build()
+                .expect("Failed to create producer");
         }
 
         assert!(
@@ -201,18 +185,10 @@ mod tests {
         let handle = std::thread::spawn({
             let sock_path = sock_path.clone();
             move || {
-                let _producer = ZeroTensorProducer::new(
-                    10,
-                    4096,
-                    shm_name,
-                    &sock_path,
-                    2,
-                    Some(1000),
-                    true,
-                    false,
-                    None,
-                )
-                .unwrap();
+                let _producer = ZeroTensorProducerBuilder::new(10, 4096, shm_name, &sock_path)
+                    .read_timeout(1000)
+                    .build()
+                    .unwrap();
 
                 assert!(sock_path.exists());
                 panic!("Simulated worker panic inside task!");

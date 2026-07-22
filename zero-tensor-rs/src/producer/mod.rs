@@ -27,7 +27,8 @@ use std::{
 use thiserror::Error;
 
 pub const DEFAULT_SLOTS: usize = 2;
-pub const CONSUMER_RESP_BUFFER: usize = b"RELEASE".len() * 2;
+pub const CONSUMER_RESPONSE: &str = "RELEASE";
+pub const CONSUMER_RESP_BUFFER: usize = CONSUMER_RESPONSE.len() * 2;
 pub const DEFAULT_TIMEOUT_CHECK_CTRLC: u64 = 500;
 
 pub struct ZeroTensorProducer {
@@ -53,55 +54,111 @@ pub enum ZTProducerErr {
     IoError(io::Error),
 }
 
-impl ZeroTensorProducer {
-    pub fn new<P: AsRef<Path>, N: Into<Option<usize>>, R: Into<Option<u64>>>(
+#[derive(Clone, Debug)]
+pub struct ZeroTensorProducerBuilder {
+    // Required
+    steps: usize,
+    step_size: usize,
+    shm_filename: String,
+    socket_addr: PathBuf,
+
+    // Optional
+    num_slots: usize,
+    read_timeout: Option<u64>,
+    overwrite_socket: bool,
+    shuffle: bool,
+    seed: Option<u64>,
+}
+
+impl ZeroTensorProducerBuilder {
+    pub fn new<P: AsRef<Path>>(
         steps: usize,
         step_size: usize,
         shm_filename: &str,
         socket_addr: P,
-        num_slots: N,
-        read_timeout: R,
-        overwrite_socket: bool,
-        shuffle: bool,
-        seed: R,
-    ) -> Result<Self, ZTProducerErr> {
+    ) -> Self {
+        Self {
+            steps,
+            step_size,
+            shm_filename: shm_filename.to_string(),
+            socket_addr: socket_addr.as_ref().to_path_buf(),
+            num_slots: DEFAULT_SLOTS,
+            read_timeout: None,
+            overwrite_socket: false,
+            shuffle: false,
+            seed: None,
+        }
+    }
+
+    pub fn num_slots(mut self, slots: usize) -> Self {
+        self.num_slots = slots;
+        self
+    }
+
+    pub fn read_timeout(mut self, timeout_ms: u64) -> Self {
+        self.read_timeout = Some(timeout_ms);
+        self
+    }
+
+    pub fn overwrite_socket(mut self, overwrite: bool) -> Self {
+        self.overwrite_socket = overwrite;
+        self
+    }
+
+    pub fn shuffle(mut self, shuffle: bool) -> Self {
+        self.shuffle = shuffle;
+        self
+    }
+
+    pub fn seed(&mut self, seed: u64) -> &Self {
+        self.seed = Some(seed);
+        self
+    }
+
+    pub fn build(self) -> Result<ZeroTensorProducer, ZTProducerErr> {
         let running = Arc::new(AtomicBool::new(true));
         let rclone = running.clone();
+
         let _ = ctrlc::set_handler(move || {
             println!("Handler worked");
             rclone.store(false, Ordering::SeqCst);
         });
 
-        let nslots = num_slots.into().unwrap_or(DEFAULT_SLOTS);
-        let total_size = nslots * step_size;
-        let buffer = ZeroTensorBuffer::new(shm_filename, total_size)
+        let total_size = self.num_slots * self.step_size;
+        let buffer = ZeroTensorBuffer::new(&self.shm_filename, total_size)
             .map_err(ZTProducerErr::ZTBufferError)?;
 
-        let path = socket_addr.as_ref();
-        if path.exists() {
-            if overwrite_socket {
-                fs::remove_file(path).map_err(ZTProducerErr::IoError)?;
+        if self.socket_addr.exists() {
+            if self.overwrite_socket {
+                fs::remove_file(&self.socket_addr).map_err(ZTProducerErr::IoError)?;
             } else {
                 return Err(ZTProducerErr::IoError(io::Error::from(
                     io::ErrorKind::AddrInUse,
                 )));
             }
         }
-        let listener = UnixListener::bind(path).map_err(ZTProducerErr::IoError)?;
+
+        let listener = UnixListener::bind(&self.socket_addr).map_err(ZTProducerErr::IoError)?;
 
         Ok(ZeroTensorProducer {
             buffer,
-            slot_size: step_size,
-            steps,
+            slot_size: self.step_size,
+            steps: self.steps,
             current_step: 0,
             listener,
-            nslots,
-            sock_path: path.into(),
-            read_timeout: read_timeout.into(),
+            nslots: self.num_slots,
+            sock_path: self.socket_addr,
+            read_timeout: self.read_timeout,
             running,
-            shuffle,
-            seed: seed.into(),
+            shuffle: self.shuffle,
+            seed: self.seed,
         })
+    }
+}
+
+impl ZeroTensorProducer {
+    pub fn from_builder(builder: ZeroTensorProducerBuilder) -> Result<Self, ZTProducerErr> {
+        builder.build()
     }
 
     fn start_streaming_loop<D: ZeroTensorDataset>(
@@ -120,7 +177,7 @@ impl ZeroTensorProducer {
             self.read_timeout.unwrap_or(DEFAULT_TIMEOUT_CHECK_CTRLC),
         );
 
-        let steps_per_epoch = (dataset.len() + batch_size - 1) / batch_size;
+        let steps_per_epoch = dataset.len().div_ceil(batch_size);
         let mut current_epoch = usize::MAX;
         let mut indices: Vec<usize> = (0..dataset.len()).collect();
 
@@ -306,7 +363,7 @@ impl ZeroTensorProducer {
                 Ok(0) => return Ok(()),
                 Ok(_) => {
                     let trimmed = buf.trim();
-                    if trimmed != "RELEASE" {
+                    if trimmed != CONSUMER_RESPONSE {
                         panic!("Unexpected protocol violation from consumer: '{}'", trimmed);
                     }
                     buf.clear();
@@ -317,10 +374,10 @@ impl ZeroTensorProducer {
                         || e.kind() == io::ErrorKind::TimedOut =>
                 {
                     let el = start_time.elapsed();
-                    if let Some(rt) = self.read_timeout {
-                        if el.as_millis() >= rt as u128 {
-                            return Err(ZTProducerErr::IoError(e));
-                        }
+                    if let Some(rt) = self.read_timeout
+                        && el.as_millis() >= rt as u128
+                    {
+                        return Err(ZTProducerErr::IoError(e));
                     }
                     continue;
                 }

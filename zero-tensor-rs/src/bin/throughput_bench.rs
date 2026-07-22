@@ -4,7 +4,7 @@ use zero_tensor_lib::{
         ZeroTensorDataset,
         item::{ShapeType, TensorDT, TensorItemMeta},
     },
-    producer::ZeroTensorProducer,
+    producer::ZeroTensorProducerBuilder,
 };
 
 const BATCH_SIZE: usize = 32;
@@ -60,18 +60,10 @@ fn main() {
         slot_size as f64 / 1024.0 / 1024.0
     );
 
-    let mut producer = ZeroTensorProducer::new(
-        STEPS,
-        slot_size as usize,
-        shm_name,
-        socket_path,
-        None,
-        None,
-        false,
-        false,
-        None,
-    )
-    .expect("Failed to create producer");
+    let mut producer =
+        ZeroTensorProducerBuilder::new(STEPS, slot_size as usize, shm_name, socket_path)
+            .build()
+            .expect("Failed to create producer");
 
     let dataset = BenchDataset {
         raw_item_size: raw_item_size as usize,
