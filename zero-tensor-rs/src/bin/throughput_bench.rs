@@ -68,6 +68,8 @@ fn main() {
         None,
         None,
         false,
+        false,
+        None,
     )
     .expect("Failed to create producer");
 

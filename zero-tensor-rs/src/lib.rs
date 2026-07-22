@@ -68,9 +68,18 @@ mod tests {
             len: batch_size * steps,
         };
 
-        let mut producer =
-            ZeroTensorProducer::new(steps, slot_size, shm_name, &socket_path, None, None, false)
-                .expect("Failed to init producer");
+        let mut producer = ZeroTensorProducer::new(
+            steps,
+            slot_size,
+            shm_name,
+            &socket_path,
+            None,
+            None,
+            false,
+            false,
+            None,
+        )
+        .expect("Failed to init producer");
 
         let consumer_socket = socket_path.clone();
         let consumer_shm_name = shm_name.to_string();
@@ -154,8 +163,18 @@ mod tests {
         let shm_name = "zt_integration_test_shm";
 
         {
-            let _ = ZeroTensorProducer::new(10, 4096, shm_name, &sock_path, 2, Some(1000), true)
-                .expect("Failed to create producer");
+            let _ = ZeroTensorProducer::new(
+                10,
+                4096,
+                shm_name,
+                &sock_path,
+                2,
+                Some(1000),
+                true,
+                false,
+                None,
+            )
+            .expect("Failed to create producer");
         }
 
         assert!(
@@ -182,9 +201,18 @@ mod tests {
         let handle = std::thread::spawn({
             let sock_path = sock_path.clone();
             move || {
-                let _producer =
-                    ZeroTensorProducer::new(10, 4096, shm_name, &sock_path, 2, Some(1000), true)
-                        .unwrap();
+                let _producer = ZeroTensorProducer::new(
+                    10,
+                    4096,
+                    shm_name,
+                    &sock_path,
+                    2,
+                    Some(1000),
+                    true,
+                    false,
+                    None,
+                )
+                .unwrap();
 
                 assert!(sock_path.exists());
                 panic!("Simulated worker panic inside task!");
