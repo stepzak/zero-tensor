@@ -240,7 +240,10 @@ mod tests {
         let mut rng2 = fastrand::Rng::with_seed(seed.unwrap());
         rng2.shuffle(&mut indices2);
 
-        assert_eq!(indices1, indices2, "Shuffled indices must be identical with the same seed");
+        assert_eq!(
+            indices1, indices2,
+            "Shuffled indices must be identical with the same seed"
+        );
     }
 
     #[test]
@@ -254,6 +257,9 @@ mod tests {
         let mut epoch1: Vec<usize> = (0..len).collect();
         fastrand::Rng::with_seed(base_seed + 1).shuffle(&mut epoch1);
 
-        assert_ne!(epoch0, epoch1, "Epochs must have different shuffle patterns");
+        assert_ne!(
+            epoch0, epoch1,
+            "Epochs must have different shuffle patterns"
+        );
     }
 }
