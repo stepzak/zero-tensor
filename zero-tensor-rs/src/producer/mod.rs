@@ -5,7 +5,10 @@ use crate::{
         item::{ShapeType, StrideType},
     },
 };
-use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
+use rayon::{
+    iter::{IndexedParallelIterator, ParallelIterator},
+    slice::ParallelSliceMut,
+};
 use std::{
     fs,
     io::{self, Write},
@@ -261,8 +264,8 @@ impl ZeroTensorProducer {
         let current_batch_size = batch_indices.len();
         let first_idx = batch_indices[0];
 
-        let (_, first_meta) = dataset.get_item(first_idx).unwrap_or_else(|| {
-            panic!("Failed to get first item of batch {first_idx} to extract metadata");
+        let first_meta = dataset.get_metadata(first_idx).unwrap_or_else(|| {
+            panic!("Failed to get first metadata of batch {first_idx} to extract metadata");
         });
 
         let dt = first_meta.dt();
@@ -314,24 +317,20 @@ impl ZeroTensorProducer {
                 .get_item_slice_mut(offset, data_start_offset, total_data_bytes)
         };
 
-        let shm_chunks: Vec<&mut [u8]> = raw_shm_slice.chunks_mut(element_size_bytes).collect();
-
-        let interrupted = batch_indices
-            .par_iter()
-            .zip(shm_chunks)
-            .any(|(&i, shm_chunk)| {
+        let interrupted = raw_shm_slice
+            .par_chunks_mut(element_size_bytes)
+            .zip(batch_indices)
+            .any(|(shm_chunk, &i)| {
                 if !self.running.load(Ordering::SeqCst) {
                     return true;
                 }
-                let (raw_data, _) = dataset.get_item(i).unwrap_or_else(|| {
+                let _ = dataset.get_item_into(i, shm_chunk).unwrap_or_else(|| {
                     panic!("Failed to get item {i} from dataset");
                 });
 
                 if !self.running.load(Ordering::SeqCst) {
                     return true;
                 }
-
-                shm_chunk[..raw_data.len()].copy_from_slice(&raw_data);
                 false
             });
 

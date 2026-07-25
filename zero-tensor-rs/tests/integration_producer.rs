@@ -4,6 +4,7 @@ use std::time::Duration;
 use tempfile::tempdir;
 
 use zero_tensor_lib::{
+    buffer::get_dt_size,
     dataset::{
         ZeroTensorDataset,
         item::{TensorDT, TensorItemMeta},
@@ -11,40 +12,62 @@ use zero_tensor_lib::{
     producer::ZeroTensorProducerBuilder,
 };
 
-struct NonContiguousMockDataset {
+struct MockDataset {
     len: usize,
+    meta: TensorItemMeta,
 }
 
-impl ZeroTensorDataset for NonContiguousMockDataset {
+impl MockDataset {
+    pub fn new(len: usize) -> Self {
+        let shape = vec![2, 3];
+        let strides = vec![3, 1];
+        let dt = TensorDT::F32;
+
+        let meta = TensorItemMeta::new(shape, strides, dt);
+
+        Self { len, meta }
+    }
+}
+
+impl ZeroTensorDataset for MockDataset {
     fn len(&self) -> usize {
         self.len
     }
 
     fn is_empty(&self) -> bool {
-        self.len != 0
+        self.len == 0
     }
 
-    fn get_item(&self, idx: usize) -> Option<(Vec<u8>, TensorItemMeta)> {
+    fn get_metadata(&self, _idx: usize) -> Option<TensorItemMeta> {
+        Some(self.meta.clone())
+    }
+
+    fn get_item_into(&self, idx: usize, buf: &mut [u8]) -> Option<TensorItemMeta> {
         if idx >= self.len {
             return None;
         }
+        let meta = self.get_metadata(idx)?;
+        let total_elements = meta.shape().iter().product::<u32>() as usize;
+        let total_bytes = total_elements * get_dt_size(meta.dt());
 
-        let shape = vec![2, 3];
-        let strides = vec![3, 1];
-        let dt = TensorDT::F32;
+        if buf.len() < total_bytes {
+            return None;
+        }
+        match meta.dt() {
+            TensorDT::F32 => {
+                let f32_slice = unsafe {
+                    std::slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut f32, total_elements)
+                };
+                (0..total_elements).for_each(|i| {
+                    f32_slice[i] = idx as f32 + i as f32 * 0.5;
+                });
+            }
+            _ => {
+                buf[..total_bytes].fill(0);
+            }
+        }
 
-        let total_elements = 6;
-        let mut raw_data = vec![0u8; total_elements * 4];
-
-        let f32_slice = unsafe {
-            std::slice::from_raw_parts_mut(raw_data.as_mut_ptr() as *mut f32, total_elements)
-        };
-
-        f32_slice[0] = idx as f32;
-        f32_slice[3] = idx as f32 + 0.5;
-
-        let meta = TensorItemMeta::new(shape, strides, dt);
-        Some((raw_data, meta))
+        Some(meta)
     }
 }
 
@@ -58,9 +81,7 @@ fn test_rust_producer_python_consumer_e2e() {
     let steps = 4;
     let slot_size = 4096;
 
-    let dataset = NonContiguousMockDataset {
-        len: batch_size * steps,
-    };
+    let dataset = MockDataset::new(batch_size * steps);
 
     let mut producer = ZeroTensorProducerBuilder::new(steps, slot_size, shm_name, &socket_path)
         .build()
