@@ -145,10 +145,10 @@ mod tests {
                 let data_ptr = unsafe { slot_bytes.as_ptr().add(offs.data()) as *const f32 };
 
                 let idx_0 = step * batch_size;
-                
+
                 let total_els = meta.shape().iter().product::<ShapeType>() as usize;
                 (0..total_els).for_each(|i| {
-                    assert_eq!( unsafe { *data_ptr.add(i) }, i as f32 * 0.5 + idx_0 as f32);
+                    assert_eq!(unsafe { *data_ptr.add(i) }, i as f32 * 0.5 + idx_0 as f32);
                 });
 
                 thread::sleep(Duration::from_millis(10));
