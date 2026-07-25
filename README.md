@@ -118,11 +118,8 @@ for epoch in range(5):
         socket_path, shm_name, slot_size, nslots=3
     ) as consumer:
         for batch in consumer:
-            # Transfer tensor to GPU memory asynchronously.
-            # Once copied to VRAM, Python sends RELEASE to Rust to reuse the SHM slot.
             inputs = batch.to(device, non_blocking=True)
 
-            # Model Forward + Backward
             outputs = model(inputs)
             loss = criterion(outputs, targets)
             loss.backward()
