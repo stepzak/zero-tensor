@@ -15,6 +15,20 @@ const STEPS: usize = 50;
 
 struct BenchDataset {
     raw_item_size: usize,
+    meta: TensorItemMeta,
+}
+
+impl BenchDataset {
+    fn new(raw_item_size: usize) -> Self {
+        let shape = vec![CHANNELS, HEIGHT, WIDTH];
+        let strides = vec![HEIGHT * WIDTH, WIDTH, 1];
+        let meta = TensorItemMeta::new(shape, strides, TensorDT::F32);
+
+        Self {
+            raw_item_size,
+            meta,
+        }
+    }
 }
 
 impl ZeroTensorDataset for BenchDataset {
@@ -26,17 +40,16 @@ impl ZeroTensorDataset for BenchDataset {
         self.len() == 0
     }
 
-    fn get_item(&self, _idx: usize) -> Option<(Vec<u8>, TensorItemMeta)> {
-        let shape = vec![CHANNELS, HEIGHT, WIDTH];
-        let strides = vec![HEIGHT * WIDTH, WIDTH, 1];
-        let meta = TensorItemMeta::new(shape, strides, TensorDT::F32);
+    fn get_metadata(&self, _idx: usize) -> Option<TensorItemMeta> {
+        Some(self.meta.clone())
+    }
 
-        let mut data = vec![0u8; self.raw_item_size];
-        for (i, slot) in data.iter_mut().enumerate() {
-            *slot = ((_idx + i) % 255) as u8;
+    fn get_item_into(&self, idx: usize, buf: &mut [u8]) -> Option<TensorItemMeta> {
+        for (i, slot) in buf[..self.raw_item_size].iter_mut().enumerate() {
+            *slot = ((idx + i) % 255) as u8;
         }
 
-        Some((data, meta))
+        self.get_metadata(idx)
     }
 }
 
@@ -65,9 +78,7 @@ fn main() {
             .build()
             .expect("Failed to create producer");
 
-    let dataset = BenchDataset {
-        raw_item_size: raw_item_size as usize,
-    };
+    let dataset = BenchDataset::new(raw_item_size as usize);
 
     println!("[Rust Bench] Ready! Waiting for Python consumer to connect...");
 
@@ -75,8 +86,5 @@ fn main() {
         .start_streaming(&dataset, BATCH_SIZE)
         .expect("Streaming failed");
 
-    println!("[Rust Bench] Finished streaming. Cleaning up...");
-    if socket_path.exists() {
-        let _ = std::fs::remove_file(socket_path);
-    }
+    println!("[Rust Bench] Finished streaming");
 }

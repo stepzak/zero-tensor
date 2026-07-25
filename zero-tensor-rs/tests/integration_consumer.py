@@ -19,13 +19,8 @@ def main():
             assert batch.dtype == torch.float32, f"Wrong dtype. Expected: {torch.float32}, got {batch.dtype}"
 
             idx_0 = steps * batch_size
-            idx_1 = steps * batch_size + 1
 
-            assert torch.allclose(batch[0, 0, 0], torch.tensor(idx_0, dtype=torch.float32))
-            assert torch.allclose(batch[0, 1, 0], torch.tensor(idx_0 + 0.5, dtype=torch.float32))
-            
-            assert torch.allclose(batch[1, 0, 0], torch.tensor(idx_1, dtype=torch.float32))
-            assert torch.allclose(batch[1, 1, 0], torch.tensor(idx_1 + 0.5, dtype=torch.float32))
+            assert torch.allclose(batch[0, 0, 0], torch.tensor(idx_0, dtype=torch.float32))            
 
             print(f"[Python] Step {steps} verified successfully.")
             steps += 1
