@@ -10,6 +10,7 @@ use rayon::{
     slice::ParallelSliceMut,
 };
 use std::{
+    error::Error,
     fs,
     io::{self, Write},
     os::unix::net::{UnixListener, UnixStream},
@@ -49,12 +50,28 @@ pub struct ZeroTensorProducer {
 }
 
 #[derive(Debug, Error)]
-pub enum ZTProducerErr {
+pub enum ZTProducerNewErr {
     #[error("ZT Buffer Error: {0}")]
-    ZTBufferError(ZTBufErr),
+    ZTBufferError(#[from] ZTBufErr),
 
-    #[error("Io error: {0}")]
-    IoError(io::Error),
+    #[error("IO error at: {0}")]
+    IoError(#[from] io::Error),
+}
+
+#[derive(Debug, Error)]
+pub enum ZTProducerErr<E: Error + 'static> {
+    #[error("ZT Buffer Error: {0}")]
+    ZTBufferError(#[from] ZTBufErr),
+
+    #[error("IO error at: {0}")]
+    IoError(#[from] io::Error),
+
+    #[error("Dataset error at index {idx}: {source}")]
+    DatasetError {
+        idx: usize,
+        #[source]
+        source: E,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -118,7 +135,7 @@ impl ZeroTensorProducerBuilder {
         self
     }
 
-    pub fn build(self) -> Result<ZeroTensorProducer, ZTProducerErr> {
+    pub fn build(self) -> Result<ZeroTensorProducer, ZTProducerNewErr> {
         let running = Arc::new(AtomicBool::new(true));
         let rclone = running.clone();
 
@@ -127,20 +144,19 @@ impl ZeroTensorProducerBuilder {
         });
 
         let total_size = self.num_slots * self.step_size;
-        let buffer = ZeroTensorBuffer::new(&self.shm_filename, total_size)
-            .map_err(ZTProducerErr::ZTBufferError)?;
+        let buffer = ZeroTensorBuffer::new(&self.shm_filename, total_size)?;
 
         if self.socket_addr.exists() {
             if self.overwrite_socket {
-                fs::remove_file(&self.socket_addr).map_err(ZTProducerErr::IoError)?;
+                fs::remove_file(&self.socket_addr)?;
             } else {
-                return Err(ZTProducerErr::IoError(io::Error::from(
+                return Err(ZTProducerNewErr::IoError(io::Error::from(
                     io::ErrorKind::AddrInUse,
                 )));
             }
         }
 
-        let listener = UnixListener::bind(&self.socket_addr).map_err(ZTProducerErr::IoError)?;
+        let listener = UnixListener::bind(&self.socket_addr)?;
 
         Ok(ZeroTensorProducer {
             buffer,
@@ -159,7 +175,7 @@ impl ZeroTensorProducerBuilder {
 }
 
 impl ZeroTensorProducer {
-    pub fn from_builder(builder: ZeroTensorProducerBuilder) -> Result<Self, ZTProducerErr> {
+    pub fn from_builder(builder: ZeroTensorProducerBuilder) -> Result<Self, ZTProducerNewErr> {
         builder.build()
     }
 
@@ -168,7 +184,7 @@ impl ZeroTensorProducer {
         dataset: &D,
         batch_size: usize,
         stream: &mut UnixStream,
-    ) -> Result<(), ZTProducerErr> {
+    ) -> Result<(), ZTProducerErr<D::Error>> {
         if dataset.len() == 0 || batch_size == 0 {
             return Ok(());
         }
@@ -260,13 +276,9 @@ impl ZeroTensorProducer {
         dataset: &D,
         batch_indices: &[usize],
         offset: usize,
-    ) -> Result<(usize, usize, usize), ZTProducerErr> {
+    ) -> Result<(usize, usize, usize), ZTProducerErr<D::Error>> {
         let current_batch_size = batch_indices.len();
         let first_idx = batch_indices[0];
-
-        let first_meta = dataset.get_metadata(first_idx).unwrap_or_else(|| {
-            panic!("Failed to get first metadata of batch {first_idx} to extract metadata");
-        });
 
         let dt = first_meta.dt();
         let ndims = (first_meta.shape().len() + 1) as u8;
@@ -311,34 +323,29 @@ impl ZeroTensorProducer {
         data_start_offset: usize,
         total_data_bytes: usize,
         element_size_bytes: usize,
-    ) -> Result<(), ZTProducerErr> {
+    ) -> Result<(), ZTProducerErr<D::Error>> {
         let raw_shm_slice = unsafe {
             self.buffer
                 .get_item_slice_mut(offset, data_start_offset, total_data_bytes)
         };
 
-        let interrupted = raw_shm_slice
+       raw_shm_slice
             .par_chunks_mut(element_size_bytes)
             .zip(batch_indices)
-            .any(|(shm_chunk, &i)| {
+            .try_for_each(|(shm_chunk, &i)| -> Result<(), ZTProducerErr<D::Error>> {
                 if !self.running.load(Ordering::SeqCst) {
-                    return true;
+                    return Err(io::Error::from(io::ErrorKind::Interrupted).into());
                 }
-                let _ = dataset.write_item_into(i, shm_chunk).unwrap_or_else(|| {
-                    panic!("Failed to get item {i} from dataset");
-                });
+                dataset.write_item_into(i, shm_chunk).map_err(|e| {
+                    ZTProducerErr::DatasetError { idx: i, source: e }
+                })?;
 
                 if !self.running.load(Ordering::SeqCst) {
-                    return true;
+                    return Err(io::Error::from(io::ErrorKind::Interrupted).into());
                 }
-                false
+
+                return Ok(())
             });
-
-        if interrupted {
-            return Err(ZTProducerErr::IoError(io::Error::from(
-                io::ErrorKind::Interrupted,
-            )));
-        }
 
         Ok(())
     }
@@ -347,19 +354,17 @@ impl ZeroTensorProducer {
         &self,
         reader: &mut BufReader<UnixStream>,
         buf: &mut String,
-    ) -> Result<(), ZTProducerErr> {
+    ) -> Result<(), io::Error> {
         let start_time = std::time::Instant::now();
 
         loop {
             if !self.running.load(Ordering::SeqCst) {
-                return Err(ZTProducerErr::IoError(io::Error::from(
-                    io::ErrorKind::Interrupted,
-                )));
+                return Err(io::Error::from(io::ErrorKind::Interrupted));
             }
 
-            match reader.read_line(buf) {
-                Ok(0) => return Ok(()),
-                Ok(_) => {
+            match reader.read_line(buf)? {
+                0 => return Ok(()),
+                _ => {
                     let trimmed = buf.trim();
                     if trimmed != CONSUMER_RESPONSE {
                         panic!("Unexpected protocol violation from consumer: '{}'", trimmed);
@@ -367,19 +372,6 @@ impl ZeroTensorProducer {
                     buf.clear();
                     return Ok(());
                 }
-                Err(e)
-                    if e.kind() == io::ErrorKind::WouldBlock
-                        || e.kind() == io::ErrorKind::TimedOut =>
-                {
-                    let el = start_time.elapsed();
-                    if let Some(rt) = self.read_timeout
-                        && el.as_millis() >= rt as u128
-                    {
-                        return Err(ZTProducerErr::IoError(e));
-                    }
-                    continue;
-                }
-                Err(e) => return Err(ZTProducerErr::IoError(e)),
             }
         }
     }
@@ -388,7 +380,7 @@ impl ZeroTensorProducer {
         &mut self,
         dataset: &D,
         batch_size: usize,
-    ) -> Result<(), ZTProducerErr> {
+    ) -> Result<(), ZTProducerErr<D::Error>> {
         self.current_step = 0;
         self.listener
             .set_nonblocking(true)

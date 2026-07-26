@@ -7,7 +7,7 @@ use zero_tensor_lib::{
     buffer::get_dt_size,
     dataset::{
         ZeroTensorDataset,
-        item::{TensorDT, TensorBatchLayout},
+        item::{TensorBatchLayout, TensorDT},
     },
     producer::ZeroTensorProducerBuilder,
 };

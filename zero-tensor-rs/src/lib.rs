@@ -14,7 +14,7 @@ mod tests {
     use crate::buffer::tensor_meta::TensorHeader;
     use crate::buffer::{ZeroTensorBuffer, get_dt_size};
     use crate::dataset::ZeroTensorDataset;
-    use crate::dataset::item::{ShapeType, StrideType, TensorDT, TensorBatchLayout};
+    use crate::dataset::item::{ShapeType, StrideType, TensorBatchLayout, TensorDT};
     use crate::producer::{CONSUMER_RESP_BUFFER, ZeroTensorProducerBuilder};
 
     struct MockDataset {

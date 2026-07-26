@@ -2,7 +2,7 @@ use std::path::Path;
 use zero_tensor_lib::{
     dataset::{
         ZeroTensorDataset,
-        item::{ShapeType, TensorDT, TensorBatchLayout},
+        item::{ShapeType, TensorBatchLayout, TensorDT},
     },
     producer::ZeroTensorProducerBuilder,
 };

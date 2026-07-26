@@ -4,11 +4,10 @@ use crate::dataset::item::TensorBatchLayout;
 
 pub mod item;
 
-
 pub type TensorBytes = Vec<u8>;
 
 pub trait ZeroTensorDataset: Send + Sync {
-    type Error: Debug + Error;
+    type Error: Debug + Error + Send + Sync;
     type Meta: Clone + Send + Sync;
 
     fn len(&self) -> usize;

@@ -1,5 +1,7 @@
 use smallvec::SmallVec;
 
+use crate::buffer::get_dt_size;
+
 #[repr(u8)]
 #[derive(Clone, Copy, std::fmt::Debug, PartialEq)]
 pub enum TensorDT {
@@ -25,7 +27,7 @@ pub type StrideVec = SmallVec<[StrideType; 8]>;
 pub struct TensorBatchLayout {
     shape: ShapeVec,
     dt: TensorDT,
-    strides: StrideVec
+    strides: StrideVec,
 }
 
 impl TensorBatchLayout {
@@ -43,5 +45,13 @@ impl TensorBatchLayout {
 
     pub fn strides(&self) -> &[StrideType] {
         &self.strides
+    }
+
+    pub fn total_elements(&self) -> usize {
+        self.shape.iter().product::<ShapeType>() as usize
+    }
+
+    pub fn total_bytes(&self) -> usize {
+        self.total_elements() * get_dt_size(self.dt)
     }
 }
