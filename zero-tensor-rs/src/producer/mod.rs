@@ -324,7 +324,7 @@ impl ZeroTensorProducer {
                 if !self.running.load(Ordering::SeqCst) {
                     return true;
                 }
-                let _ = dataset.get_item_into(i, shm_chunk).unwrap_or_else(|| {
+                let _ = dataset.write_item_into(i, shm_chunk).unwrap_or_else(|| {
                     panic!("Failed to get item {i} from dataset");
                 });
 

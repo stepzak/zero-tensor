@@ -14,12 +14,12 @@ mod tests {
     use crate::buffer::tensor_meta::TensorHeader;
     use crate::buffer::{ZeroTensorBuffer, get_dt_size};
     use crate::dataset::ZeroTensorDataset;
-    use crate::dataset::item::{ShapeType, StrideType, TensorDT, TensorItemMeta};
+    use crate::dataset::item::{ShapeType, StrideType, TensorDT, TensorBatchLayout};
     use crate::producer::{CONSUMER_RESP_BUFFER, ZeroTensorProducerBuilder};
 
     struct MockDataset {
         len: usize,
-        meta: TensorItemMeta,
+        meta: TensorBatchLayout,
     }
 
     impl MockDataset {
@@ -27,7 +27,7 @@ mod tests {
             let shape = vec![2, 3];
             let strides = vec![3, 1];
             let dt = TensorDT::F32;
-            let meta = TensorItemMeta::new(shape, strides, dt);
+            let meta = TensorBatchLayout::new(shape, strides, dt);
 
             Self { len, meta }
         }
@@ -42,11 +42,11 @@ mod tests {
             self.len == 0
         }
 
-        fn get_metadata(&self, _idx: usize) -> Option<TensorItemMeta> {
+        fn get_metadata(&self, _idx: usize) -> Option<TensorBatchLayout> {
             Some(self.meta.clone())
         }
 
-        fn get_item_into(&self, idx: usize, buf: &mut [u8]) -> Option<TensorItemMeta> {
+        fn write_item_into(&self, idx: usize, buf: &mut [u8]) -> Option<TensorBatchLayout> {
             if idx >= self.len {
                 return None;
             }

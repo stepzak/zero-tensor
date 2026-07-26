@@ -2,7 +2,7 @@ use std::path::Path;
 use zero_tensor_lib::{
     dataset::{
         ZeroTensorDataset,
-        item::{ShapeType, TensorDT, TensorItemMeta},
+        item::{ShapeType, TensorDT, TensorBatchLayout},
     },
     producer::ZeroTensorProducerBuilder,
 };
@@ -15,14 +15,14 @@ const STEPS: usize = 50;
 
 struct BenchDataset {
     raw_item_size: usize,
-    meta: TensorItemMeta,
+    meta: TensorBatchLayout,
 }
 
 impl BenchDataset {
     fn new(raw_item_size: usize) -> Self {
         let shape = vec![CHANNELS, HEIGHT, WIDTH];
         let strides = vec![HEIGHT * WIDTH, WIDTH, 1];
-        let meta = TensorItemMeta::new(shape, strides, TensorDT::F32);
+        let meta = TensorBatchLayout::new(shape, strides, TensorDT::F32);
 
         Self {
             raw_item_size,
@@ -40,11 +40,11 @@ impl ZeroTensorDataset for BenchDataset {
         self.len() == 0
     }
 
-    fn get_metadata(&self, _idx: usize) -> Option<TensorItemMeta> {
+    fn get_metadata(&self, _idx: usize) -> Option<TensorBatchLayout> {
         Some(self.meta.clone())
     }
 
-    fn get_item_into(&self, idx: usize, buf: &mut [u8]) -> Option<TensorItemMeta> {
+    fn write_item_into(&self, idx: usize, buf: &mut [u8]) -> Option<TensorBatchLayout> {
         for (i, slot) in buf[..self.raw_item_size].iter_mut().enumerate() {
             *slot = ((idx + i) % 255) as u8;
         }

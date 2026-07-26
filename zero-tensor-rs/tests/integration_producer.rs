@@ -7,14 +7,14 @@ use zero_tensor_lib::{
     buffer::get_dt_size,
     dataset::{
         ZeroTensorDataset,
-        item::{TensorDT, TensorItemMeta},
+        item::{TensorDT, TensorBatchLayout},
     },
     producer::ZeroTensorProducerBuilder,
 };
 
 struct MockDataset {
     len: usize,
-    meta: TensorItemMeta,
+    meta: TensorBatchLayout,
 }
 
 impl MockDataset {
@@ -23,7 +23,7 @@ impl MockDataset {
         let strides = vec![3, 1];
         let dt = TensorDT::F32;
 
-        let meta = TensorItemMeta::new(shape, strides, dt);
+        let meta = TensorBatchLayout::new(shape, strides, dt);
 
         Self { len, meta }
     }
@@ -38,11 +38,11 @@ impl ZeroTensorDataset for MockDataset {
         self.len == 0
     }
 
-    fn get_metadata(&self, _idx: usize) -> Option<TensorItemMeta> {
+    fn get_metadata(&self, _idx: usize) -> Option<TensorBatchLayout> {
         Some(self.meta.clone())
     }
 
-    fn get_item_into(&self, idx: usize, buf: &mut [u8]) -> Option<TensorItemMeta> {
+    fn write_item_into(&self, idx: usize, buf: &mut [u8]) -> Option<TensorBatchLayout> {
         if idx >= self.len {
             return None;
         }

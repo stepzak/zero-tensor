@@ -50,25 +50,25 @@ Define your dataset and spawn the streaming loop using the thread-safe `ZeroTens
 use std::path::Path;
 use zero_tensor_lib::{
     dataset::{
-        item::{TensorDT, TensorItemMeta},
+        item::{TensorDT, TensorBatchLayout},
         ZeroTensorDataset,
     },
     producer::ZeroTensorProducerBuilder,
 };
 
 struct MyDataset {
-    meta: TensorItemMeta,
+    meta: TensorBatchLayout,
 }
 
 impl ZeroTensorDataset for MyDataset {
     fn len(&self) -> usize { 10000 }
     fn is_empty(&self) -> bool { false }
 
-    fn get_metadata(&self, _idx: usize) -> Option<TensorItemMeta> {
+    fn get_metadata(&self, _idx: usize) -> Option<TensorBatchLayout> {
         Some(self.meta.clone())
     }
 
-    fn get_item_into(&self, idx: usize, buf: &mut [u8]) -> Option<TensorItemMeta> {
+    fn write_item_into(&self, idx: usize, buf: &mut [u8]) -> Option<TensorBatchLayout> {
         // Write raw item bytes directly into the pre-allocated slice
         // e.g., copy image bytes or raw f32 slices
         Some(self.meta.clone())
@@ -142,7 +142,7 @@ The telemetry captured via ``perf stat`` highlights why ZeroTensor outperforms t
 
 We are actively working on scaling `ZeroTensor` to support more complex deep learning workloads. Contributions are highly welcome!
 
-[x] **In-Place Rust Dataset Pipeline**: Refactored core dataset traits from dynamic heap allocations (Vec<u8>) to highly optimized in-place memory writes (get_item_into) using zero-cost slicing.
+[x] **In-Place Rust Dataset Pipeline**: Refactored core dataset traits from dynamic heap allocations (Vec<u8>) to highly optimized in-place memory writes (write_item_into) using zero-cost slicing.
 
 [x] **Builder Pattern & Multi-Epoch Shuffling**: Integrated flexible producer initialization with configurable shuffling seeds.
 
