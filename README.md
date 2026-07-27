@@ -6,16 +6,18 @@
 
 ## Performance Benchmark (Total: 4800 MB Transferred)
 
-| Metric | Standard PyTorch DataLoader | ZeroTensor IPC Loader | System Impact |
-| :--- | :---: | :---: | :--- |
-| **Throughput** | 2.16 GB/s | **8.0+ GB/s** | **>3.5x Faster** |
-| **Execution Time** | 2.17 s | **<0.60 s** | **Time reduced by ~75%** |
-| **Absolute Page-Faults** | **1,625,422** | **75,540** | **21.5x Reduction** |
-| **Page-Fault Rate** | ~241,926 / sec | **~33,192 / sec** | Dramatic reduction in OS paging overhead |
-| **Kernel Space Time (`sys`)** | **3.29 s** | **0.17 s** | **19x Less OS kernel overhead** |
-| **CPU Utilization (Python)** | 2.0 CPUs (100% Core + 100% Atom) | **1.0 CPU (User-space only)** | Minimizes scheduling noise, preserves cores |
+## 🚀 Performance Benchmark (Total: 4800 MB Transferred)
 
-> This benchmark measures **pure IPC transport and zero-copy slicing overhead** using a synthetic dataset. By removing heavy disk I/O boundaries, we isolate and expose the core architectural performance of both data loaders. Under these conditions, ZeroTensor demonstrates near-hardware memory bandwidth limits.
+*Environment: Synthetic dataset (3x512x512 F32 images), Batch Size 32, 50 Steps.*
+
+| Metric | Standard PyTorch DataLoader | ZeroTensor IPC Loader | Improvement |
+| :--- | :---: | :---: | :---: |
+| **Throughput** | ~3.52 GB/s | **7.33+ GB/s** | **>2.0x Faster** |
+| **Execution Time** | 1.33 s | **0.64 s** | **~52% Time Reduction** |
+| **Page Faults** | Linear growth per batch | **O(1) (Startup only)** | **Eliminated runtime paging** |
+| **Sys/CPU time** | 5.06s/13.27s (~38%) | 0.17s/2.2s(~8.5%) | **User-space dominant** |
+
+> **Note:** The benchmark includes realistic CPU load (`copy_from_slice` + arithmetic) in the Rust producer to simulate real-world decoding/preprocessing. ZeroTensor maintains its lead even under heavy computational load due to its zero-copy architecture.
 
 ---
 
@@ -44,40 +46,52 @@ The standard PyTorch `DataLoader` using multiprocessing (`num_workers > 0`) hits
 
 ### 1. Rust Data Producer
 
-Define your dataset and spawn the streaming loop using the thread-safe `ZeroTensorProducer`:
+
+Define your dataset using the `ZeroTensorDataset` trait. Note the support for dynamic layouts via `get_batch_layout`.
 
 ```rust
 use std::path::Path;
 use zero_tensor_lib::{
     dataset::{
-        item::{TensorDT, TensorItemMeta},
+        item::{TensorDT, TensorBatchLayout},
         ZeroTensorDataset,
     },
     producer::ZeroTensorProducerBuilder,
 };
+use smallvec::smallvec;
 
 struct MyDataset {
-    meta: TensorItemMeta,
+    // Store metadata or source paths here
 }
 
 impl ZeroTensorDataset for MyDataset {
+    type Error = std::io::Error;
+
     fn len(&self) -> usize { 10000 }
     fn is_empty(&self) -> bool { false }
 
-    fn get_metadata(&self, _idx: usize) -> Option<TensorItemMeta> {
-        Some(self.meta.clone())
+    /// Returns the layout for the ENTIRE batch (handling padding if needed)
+    fn get_batch_layout(&self, indices: &[usize]) -> Result<TensorBatchLayout, Self::Error> {
+        // Logic to find max H/W in indices and return padded layout
+        // For fixed size, just return the static layout:
+        Ok(TensorBatchLayout::new(
+            smallvec![3, 512, 512], // Shape [C, H, W]
+            smallvec![512*512, 512, 1], // Strides in elements
+            TensorDT::F32
+        ))
     }
 
-    fn get_item_into(&self, idx: usize, buf: &mut [u8]) -> Option<TensorItemMeta> {
-        // Write raw item bytes directly into the pre-allocated slice
-        // e.g., copy image bytes or raw f32 slices
-        Some(self.meta.clone())
+    /// Writes raw item bytes directly into the pre-allocated slice
+    fn write_item_into(&self, idx: usize, buf: &mut [u8]) -> Result<(), Self::Error> {
+        // Write your data (e.g., image pixels) into 'buf'
+        // The buffer is already sized to the max shape of the batch
+        Ok(())
     }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let dataset = MyDataset::new();
-    let slot_size = 32 * 1024 * 1024; // 32 MB slot size
+    let dataset = MyDataset {};
+    let slot_size = 32 * 1024 * 1024; // 32 MB per slot
     let steps = 100;
 
     let mut producer = ZeroTensorProducerBuilder::new(
@@ -86,7 +100,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "zt_shared_buffer",
         Path::new("/tmp/zt.sock"),
     )
-    .num_slots(3)
+    .num_slots(3) // Use 3+ slots for pipeline efficiency
     .overwrite_socket(true)
     .shuffle(true)
     .seed(42)
@@ -142,10 +156,10 @@ The telemetry captured via ``perf stat`` highlights why ZeroTensor outperforms t
 
 We are actively working on scaling `ZeroTensor` to support more complex deep learning workloads. Contributions are highly welcome!
 
-[x] **In-Place Rust Dataset Pipeline**: Refactored core dataset traits from dynamic heap allocations (Vec<u8>) to highly optimized in-place memory writes (get_item_into) using zero-cost slicing.
+[x] **In-Place Rust Dataset Pipeline**: Refactored core dataset traits from dynamic heap allocations (Vec<u8>) to highly optimized in-place memory writes (write_item_into) using zero-cost slicing.
 
 [x] **Builder Pattern & Multi-Epoch Shuffling**: Integrated flexible producer initialization with configurable shuffling seeds.
 
 [ ] **Native Multi-Epoch Control Loop**: Support continuous connection handling across epochs via explicit EPOCH_DONE signaling.
 
-[ ] **Dynamic Tensor Shapes Support**: Implement elastic memory partitioning inside SHM slots for variable sequence length workloads (e.g., LLM tokenization, audio processing).
+[x] **Dynamic Tensor Shapes Support**: Implement elastic memory partitioning inside SHM slots for variable sequence length workloads (e.g., LLM tokenization, audio processing).

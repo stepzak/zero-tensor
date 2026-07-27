@@ -1,6 +1,5 @@
 import struct
 import torch
-#from _typeshed import ReadableBuffer
 
 DT_F16: int = 0
 DT_F32: int = 1

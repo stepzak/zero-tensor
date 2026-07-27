@@ -2,7 +2,7 @@ use std::path::Path;
 use zero_tensor_lib::{
     dataset::{
         ZeroTensorDataset,
-        item::{ShapeType, TensorDT, TensorItemMeta},
+        item::{ShapeType, TensorBatchLayout, TensorDT},
     },
     producer::ZeroTensorProducerBuilder,
 };
@@ -15,23 +15,30 @@ const STEPS: usize = 50;
 
 struct BenchDataset {
     raw_item_size: usize,
-    meta: TensorItemMeta,
+    meta: TensorBatchLayout,
+    source_buffer: Vec<u8>,
 }
 
 impl BenchDataset {
     fn new(raw_item_size: usize) -> Self {
         let shape = vec![CHANNELS, HEIGHT, WIDTH];
         let strides = vec![HEIGHT * WIDTH, WIDTH, 1];
-        let meta = TensorItemMeta::new(shape, strides, TensorDT::F32);
+        let meta = TensorBatchLayout::new(shape.into(), strides.into(), TensorDT::F32);
+        let mut source = vec![0u8; raw_item_size];
+        fastrand::Rng::new().fill(&mut source);
 
         Self {
             raw_item_size,
             meta,
+            source_buffer: source,
         }
     }
 }
 
 impl ZeroTensorDataset for BenchDataset {
+    type Error = std::io::Error;
+    type Meta = TensorBatchLayout;
+
     fn len(&self) -> usize {
         BATCH_SIZE * STEPS
     }
@@ -40,16 +47,19 @@ impl ZeroTensorDataset for BenchDataset {
         self.len() == 0
     }
 
-    fn get_metadata(&self, _idx: usize) -> Option<TensorItemMeta> {
-        Some(self.meta.clone())
+    fn get_batch_layout(&self, _idxs: &[usize]) -> Result<TensorBatchLayout, Self::Error> {
+        Ok(self.meta.clone())
     }
 
-    fn get_item_into(&self, idx: usize, buf: &mut [u8]) -> Option<TensorItemMeta> {
-        for (i, slot) in buf[..self.raw_item_size].iter_mut().enumerate() {
-            *slot = ((idx + i) % 255) as u8;
+    fn write_item_into(&self, idx: usize, buf: &mut [u8]) -> Result<(), Self::Error> {
+        let target = &mut buf[..self.raw_item_size];
+        target.copy_from_slice(&self.source_buffer[..self.raw_item_size]);
+
+        for byte in target.iter_mut() {
+            *byte = byte.wrapping_add(idx as u8);
         }
 
-        self.get_metadata(idx)
+        Ok(())
     }
 }
 

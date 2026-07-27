@@ -1,3 +1,7 @@
+use smallvec::SmallVec;
+
+use crate::buffer::get_dt_size;
+
 #[repr(u8)]
 #[derive(Clone, Copy, std::fmt::Debug, PartialEq)]
 pub enum TensorDT {
@@ -14,16 +18,21 @@ pub enum TensorDT {
 pub type ShapeType = u32;
 pub type StrideType = u32;
 
+const MAX_NDIMS: usize = 8;
+
+pub type ShapeVec = SmallVec<[ShapeType; MAX_NDIMS]>;
+pub type StrideVec = SmallVec<[StrideType; MAX_NDIMS]>;
+
 #[derive(Debug, Clone)]
-pub struct TensorItemMeta {
-    shape: Vec<ShapeType>,
+pub struct TensorBatchLayout {
+    shape: ShapeVec,
     dt: TensorDT,
-    strides: Vec<StrideType>,
+    strides: StrideVec,
 }
 
-impl TensorItemMeta {
-    pub fn new(shape: Vec<ShapeType>, strides: Vec<StrideType>, dt: TensorDT) -> Self {
-        TensorItemMeta { shape, strides, dt }
+impl TensorBatchLayout {
+    pub fn new(shape: ShapeVec, strides: StrideVec, dt: TensorDT) -> Self {
+        TensorBatchLayout { shape, strides, dt }
     }
 
     pub fn shape(&self) -> &[ShapeType] {
@@ -36,5 +45,13 @@ impl TensorItemMeta {
 
     pub fn strides(&self) -> &[StrideType] {
         &self.strides
+    }
+
+    pub fn total_elements(&self) -> usize {
+        self.shape.iter().product::<ShapeType>() as usize
+    }
+
+    pub fn total_bytes(&self) -> usize {
+        self.total_elements() * get_dt_size(self.dt)
     }
 }

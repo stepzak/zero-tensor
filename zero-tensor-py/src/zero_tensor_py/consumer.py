@@ -65,13 +65,15 @@ class ZeroTensorConsumer:
 
         buf = bytearray()
         while True:
-            c = self.sock.recv(1)
+            c = self.sock.recv(8192)
             if not c:
                 break
 
-            if c == b'\n':
-                msg = buf.decode("utf-8").strip()
-                buf.clear()
+            buf.extend(c)
+
+            while b'\n' in buf:
+                line, buf = buf.split(b'\n', 1)
+                msg = line.decode('utf-8').strip()
                 if msg.startswith("READY"):
                     try:
                         offset = int(msg.split()[1])
@@ -86,5 +88,3 @@ class ZeroTensorConsumer:
                     yield batch_tensor
 
                     self.sock.sendall(b"RELEASE\n")
-            else:
-                buf.extend(c)

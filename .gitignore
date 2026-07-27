@@ -25,3 +25,5 @@ Thumbs.db
 *.sln
 *.swp
 test.py
+perf.data
+perf_report.txt
