@@ -6,8 +6,6 @@
 
 ## Performance Benchmark (Total: 4800 MB Transferred)
 
-## 🚀 Performance Benchmark (Total: 4800 MB Transferred)
-
 *Environment: Synthetic dataset (3x512x512 F32 images), Batch Size 32, 50 Steps.*
 
 | Metric | Standard PyTorch DataLoader | ZeroTensor IPC Loader | Improvement |
