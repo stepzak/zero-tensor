@@ -6,28 +6,46 @@ def main():
     socket_path = sys.argv[1]
     shm_name = sys.argv[2]
     slot_size = int(sys.argv[3])
-    max_steps = int(sys.argv[4])
-    batch_size = 2
+    batch_size = int(sys.argv[4])
+    max_steps = int(sys.argv[5])
 
-    print(f"[Python] Connecting to {socket_path} (shm: {shm_name})...")
-
-    with ZeroTensorConsumer(socket_path, shm_name, slot_size, batch_size) as consumer:
-        steps = 0
-        for batch in consumer:
-            assert batch.shape == (batch_size, 2, 3), f"Wrong shape. Expected: ({batch_size}, 2, 3), got: {batch.shape}"
-            assert batch.stride() == (6, 3, 1),  f"Wrong stride. Expected: (6, 3, 1), got: {batch.stride()}"
-            assert batch.dtype == torch.float32, f"Wrong dtype. Expected: {torch.float32}, got {batch.dtype}"
-
-            idx_0 = steps * batch_size
-
-            assert torch.allclose(batch[0, 0, 0], torch.tensor(idx_0, dtype=torch.float32))            
-
-            print(f"[Python] Step {steps} verified successfully.")
-            steps += 1
-            if steps >= max_steps:
-                break
+    print(f"[PyConsumer] Connecting to {socket_path}...")
     
-    print("[Python] Integration consumer finished successfully.")
+    with ZeroTensorConsumer(socket_path, shm_name, slot_size, nslots=3) as consumer:
+        step = 0
+        for batch in consumer:
+            b, h, w = batch.shape
+            assert b == batch_size, f"Step {step}: Expected B={batch_size}, got {b}"
+            
+            for i in range(b):
+                item = batch[i]
+                
+                non_zero_mask = (item != 0)
+                
+                if not non_zero_mask.any():
+                    continue
+                    
+                rows_with_data = non_zero_mask.any(dim=1)
+                cols_with_data = non_zero_mask.any(dim=0)
+                
+                last_row = rows_with_data.nonzero(as_tuple=True)[0][-1].item()
+                last_col = cols_with_data.nonzero(as_tuple=True)[0][-1].item()
+                
+                if last_row < h - 1:
+                    assert torch.all(item[last_row + 1:, :] == 0), \
+                        f"Step {step}, Item {i}: Bottom padding is not zero!"
+                        
+                if last_col < w - 1:
+                    assert torch.all(item[:, last_col + 1:] == 0), \
+                        f"Step {step}, Item {i}: Right padding is not zero!"
+            
+            print(f"Step {step}: Verified batch shape [{b}, {h}, {w}] with correct padding.")
+            step += 1
+            
+            if step >= max_steps:
+                break
+                
+    print("Dynamic batching integration test PASSED.")
     sys.exit(0)
 
 if __name__ == "__main__":

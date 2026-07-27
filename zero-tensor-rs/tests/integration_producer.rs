@@ -2,108 +2,123 @@ use std::process::Command;
 use std::thread;
 use std::time::Duration;
 use tempfile::tempdir;
-
 use zero_tensor_lib::{
     buffer::get_dt_size,
     dataset::{
         ZeroTensorDataset,
-        item::{TensorBatchLayout, TensorDT},
+        item::{ShapeType, TensorBatchLayout, TensorDT},
     },
     producer::ZeroTensorProducerBuilder,
 };
 
-struct MockDataset {
-    len: usize,
-    meta: TensorBatchLayout,
+#[derive(Debug)]
+struct TestError(String);
+impl std::fmt::Display for TestError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
 }
-
-impl MockDataset {
-    pub fn new(len: usize) -> Self {
-        let shape = vec![2, 3];
-        let strides = vec![3, 1];
-        let dt = TensorDT::F32;
-
-        let meta = TensorBatchLayout::new(shape.into(), strides.into(), dt);
-
-        Self { len, meta }
+impl std::error::Error for TestError {}
+impl zero_tensor_lib::dataset::ZTDatasetError for TestError {
+    fn index(&self) -> Option<usize> {
+        None
     }
 }
 
-impl ZeroTensorDataset for MockDataset {
-    type Error = std::io::Error;
+struct DynamicDataset {
+    shapes: Vec<(ShapeType, ShapeType)>, // (H, W)
+}
+
+impl DynamicDataset {
+    fn new(num_items: usize) -> Self {
+        let mut rng = fastrand::Rng::new();
+        let shapes = (0..num_items)
+            .map(|_| (rng.u32(2..6), rng.u32(2..6)))
+            .collect();
+        Self { shapes }
+    }
+}
+
+impl ZeroTensorDataset for DynamicDataset {
+    type Error = TestError;
     type Meta = TensorBatchLayout;
 
     fn len(&self) -> usize {
-        self.len
+        self.shapes.len()
     }
 
     fn is_empty(&self) -> bool {
-        self.len == 0
+        self.len() == 0
     }
 
-    fn get_batch_layout(&self, _idxs: &[usize]) -> Result<TensorBatchLayout, Self::Error> {
-        Ok(self.meta.clone())
+    fn get_batch_layout(&self, indices: &[usize]) -> Result<TensorBatchLayout, Self::Error> {
+        if indices.is_empty() {
+            return Err(TestError("Empty batch".into()));
+        }
+
+        let (max_h, max_w) = indices
+            .iter()
+            .map(|&i| self.shapes[i])
+            .fold((0, 0), |(mh, mw), (h, w)| (mh.max(h), mw.max(w)));
+
+        let mut shape = zero_tensor_lib::dataset::item::ShapeVec::new();
+        shape.push(max_h);
+        shape.push(max_w);
+
+        let mut strides = zero_tensor_lib::dataset::item::StrideVec::new();
+        strides.push(max_w);
+        strides.push(1);
+
+        Ok(TensorBatchLayout::new(shape, strides, TensorDT::F32))
     }
 
     fn write_item_into(&self, idx: usize, buf: &mut [u8]) -> Result<(), Self::Error> {
-        if idx >= self.len {
-            return Err(std::io::ErrorKind::InvalidData.into());
-        }
-        let meta = self.get_batch_layout(&[idx])?;
-        let total_elements = meta.shape().iter().product::<u32>() as usize;
-        let total_bytes = total_elements * get_dt_size(meta.dt());
+        let (h, w) = self.shapes[idx];
+        let total_els = (h * w) as usize;
 
-        if buf.len() < total_bytes {
-            return Err(std::io::ErrorKind::InvalidData.into());
-        }
-        match meta.dt() {
-            TensorDT::F32 => {
-                let f32_slice = unsafe {
-                    std::slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut f32, total_elements)
-                };
-                (0..total_elements).for_each(|i| {
-                    f32_slice[i] = idx as f32 + i as f32 * 0.5;
-                });
-            }
-            _ => {
-                buf[..total_bytes].fill(0);
+        let f32_buf =
+            unsafe { std::slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut f32, total_els) };
+
+        for r in 0..h {
+            for c in 0..w {
+                f32_buf[(r * w + c) as usize] = (r * 10 + c + idx as u32 * 100) as f32;
             }
         }
-
         Ok(())
     }
 }
 
 #[test]
-fn test_rust_producer_python_consumer_e2e() {
+fn test_dynamic_batching_e2e() {
     let dir = tempdir().unwrap();
-    let socket_path = dir.path().join("integration_test.sock");
-    let shm_name = "zt_integration_test_shm";
+    let socket_path = dir.path().join("dyn_test.sock");
+    let shm_name = "zt_dyn_integration";
 
-    let batch_size = 2;
-    let steps = 4;
-    let slot_size = 4096;
+    let batch_size = 4;
+    let steps = 3;
+    let dataset = DynamicDataset::new(batch_size * steps);
 
-    let dataset = MockDataset::new(batch_size * steps);
+    let max_item_bytes = (5 * 5 * get_dt_size(TensorDT::F32)) as usize;
+    let slot_size = (max_item_bytes * batch_size) + 4096;
 
     let mut producer = ZeroTensorProducerBuilder::new(steps, slot_size, shm_name, &socket_path)
+        .num_slots(3)
         .build()
-        .expect("Failed to initialize Rust producer");
+        .expect("Failed to init producer");
 
     let consumer_socket = socket_path.clone();
     let consumer_shm = shm_name.to_string();
 
     let python_handle = thread::spawn(move || {
-        thread::sleep(Duration::from_millis(50));
+        thread::sleep(Duration::from_millis(200));
 
         let root_dir = std::env::current_dir()
             .unwrap()
             .parent()
             .unwrap()
             .to_path_buf();
-
         let python_project_dir = root_dir.join("zero-tensor-py");
-        let consumer_script_path = root_dir.join("zero-tensor-rs/tests/integration_consumer.py");
+        let consumer_script = root_dir.join("zero-tensor-rs/tests/integration_consumer.py");
         let python_path = python_project_dir.join("src");
 
         let status = Command::new("uv")
@@ -111,25 +126,25 @@ fn test_rust_producer_python_consumer_e2e() {
             .arg(&python_project_dir)
             .arg("run")
             .arg("python3")
-            .arg(&consumer_script_path)
+            .arg(&consumer_script)
             .arg(&consumer_socket)
             .arg(&consumer_shm)
             .arg(slot_size.to_string())
+            .arg(batch_size.to_string())
             .arg(steps.to_string())
             .env("PYTHONPATH", python_path)
             .status()
-            .expect("Failed to execute python command via uv");
+            .expect("Failed to execute python consumer");
 
-        assert!(status.success(), "Python consumer exited with error status");
-
-        assert!(status.success(), "Python consumer exited with error status");
+        assert!(
+            status.success(),
+            "Python consumer failed with status: {:?}",
+            status
+        );
     });
 
     producer
         .start_streaming(&dataset, batch_size)
         .expect("Streaming failed");
-
-    python_handle
-        .join()
-        .expect("Python consumer thread panicked");
+    python_handle.join().expect("Consumer thread panicked");
 }

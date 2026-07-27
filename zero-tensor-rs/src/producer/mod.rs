@@ -340,6 +340,8 @@ impl ZeroTensorProducer {
                 .get_item_slice_mut(offset, data_start_offset, total_data_bytes)
         };
 
+        raw_shm_slice.fill(0);
+
         raw_shm_slice
             .par_chunks_mut(element_size_bytes)
             .zip(batch_indices)

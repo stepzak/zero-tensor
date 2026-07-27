@@ -16,7 +16,7 @@ const STEPS: usize = 50;
 struct BenchDataset {
     raw_item_size: usize,
     meta: TensorBatchLayout,
-    source_buffer: Vec<u8>
+    source_buffer: Vec<u8>,
 }
 
 impl BenchDataset {
@@ -54,9 +54,9 @@ impl ZeroTensorDataset for BenchDataset {
     fn write_item_into(&self, idx: usize, buf: &mut [u8]) -> Result<(), Self::Error> {
         let target = &mut buf[..self.raw_item_size];
         target.copy_from_slice(&self.source_buffer[..self.raw_item_size]);
-        
+
         for byte in target.iter_mut() {
-            *byte = byte.wrapping_add(idx as u8); 
+            *byte = byte.wrapping_add(idx as u8);
         }
 
         Ok(())
