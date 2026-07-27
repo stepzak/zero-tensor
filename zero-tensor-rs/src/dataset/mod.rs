@@ -6,8 +6,18 @@ pub mod item;
 
 pub type TensorBytes = Vec<u8>;
 
+pub trait ZTDatasetError: Debug + Error + Send + Sync {
+    fn index(&self) -> Option<usize>;
+}
+
+impl ZTDatasetError for std::io::Error {
+    fn index(&self) -> Option<usize> {
+        None
+    }
+}
+
 pub trait ZeroTensorDataset: Send + Sync {
-    type Error: Debug + Error + Send + Sync;
+    type Error: ZTDatasetError;
     type Meta: Clone + Send + Sync;
 
     fn len(&self) -> usize;

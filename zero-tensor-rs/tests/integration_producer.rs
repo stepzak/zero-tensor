@@ -23,13 +23,16 @@ impl MockDataset {
         let strides = vec![3, 1];
         let dt = TensorDT::F32;
 
-        let meta = TensorBatchLayout::new(shape, strides, dt);
+        let meta = TensorBatchLayout::new(shape.into(), strides.into(), dt);
 
         Self { len, meta }
     }
 }
 
 impl ZeroTensorDataset for MockDataset {
+    type Error = std::io::Error;
+    type Meta = TensorBatchLayout;
+
     fn len(&self) -> usize {
         self.len
     }
@@ -38,20 +41,20 @@ impl ZeroTensorDataset for MockDataset {
         self.len == 0
     }
 
-    fn get_metadata(&self, _idx: usize) -> Option<TensorBatchLayout> {
-        Some(self.meta.clone())
+    fn get_batch_layout(&self, _idxs: &[usize]) -> Result<TensorBatchLayout, Self::Error> {
+        Ok(self.meta.clone())
     }
 
-    fn write_item_into(&self, idx: usize, buf: &mut [u8]) -> Option<TensorBatchLayout> {
+    fn write_item_into(&self, idx: usize, buf: &mut [u8]) -> Result<(), Self::Error> {
         if idx >= self.len {
-            return None;
+            return Err(std::io::ErrorKind::InvalidData.into());
         }
-        let meta = self.get_metadata(idx)?;
+        let meta = self.get_batch_layout(&[idx])?;
         let total_elements = meta.shape().iter().product::<u32>() as usize;
         let total_bytes = total_elements * get_dt_size(meta.dt());
 
         if buf.len() < total_bytes {
-            return None;
+            return Err(std::io::ErrorKind::InvalidData.into());
         }
         match meta.dt() {
             TensorDT::F32 => {
@@ -67,7 +70,7 @@ impl ZeroTensorDataset for MockDataset {
             }
         }
 
-        Some(meta)
+        Ok(())
     }
 }
 

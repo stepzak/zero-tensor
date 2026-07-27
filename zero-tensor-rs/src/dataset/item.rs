@@ -20,8 +20,8 @@ pub type StrideType = u32;
 
 const MAX_NDIMS: usize = 8;
 
-pub type ShapeVec = SmallVec<[ShapeType; 8]>;
-pub type StrideVec = SmallVec<[StrideType; 8]>;
+pub type ShapeVec = SmallVec<[ShapeType; MAX_NDIMS]>;
+pub type StrideVec = SmallVec<[StrideType; MAX_NDIMS]>;
 
 #[derive(Debug, Clone)]
 pub struct TensorBatchLayout {

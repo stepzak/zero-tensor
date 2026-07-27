@@ -1,8 +1,8 @@
 use crate::{
     buffer::{ZTBufErr, ZeroTensorBuffer, get_dt_size, tensor_meta::TensorHeader},
     dataset::{
-        ZeroTensorDataset,
-        item::{ShapeType, StrideType},
+        ZTDatasetError, ZeroTensorDataset,
+        item::{ShapeType, ShapeVec, StrideType, StrideVec},
     },
 };
 use rayon::{
@@ -10,7 +10,6 @@ use rayon::{
     slice::ParallelSliceMut,
 };
 use std::{
-    error::Error,
     fs,
     io::{self, Write},
     os::unix::net::{UnixListener, UnixStream},
@@ -54,21 +53,21 @@ pub enum ZTProducerNewErr {
     #[error("ZT Buffer Error: {0}")]
     ZTBufferError(#[from] ZTBufErr),
 
-    #[error("IO error at: {0}")]
+    #[error("IO error: {0}")]
     IoError(#[from] io::Error),
 }
 
 #[derive(Debug, Error)]
-pub enum ZTProducerErr<E: Error + 'static> {
+pub enum ZTProducerErr<E: ZTDatasetError + 'static> {
     #[error("ZT Buffer Error: {0}")]
     ZTBufferError(#[from] ZTBufErr),
 
     #[error("IO error at: {0}")]
     IoError(#[from] io::Error),
 
-    #[error("Dataset error at index {idx}: {source}")]
+    #[error("Dataset error {source}")]
     DatasetError {
-        idx: usize,
+        idx: Option<usize>,
         #[source]
         source: E,
     },
@@ -271,6 +270,7 @@ impl ZeroTensorProducer {
         }
     }
 
+    /// Returns: (data_start_offset, total_data_bytes, element_size_bytes)
     fn prepare_batch_metadata<D: ZeroTensorDataset>(
         &mut self,
         dataset: &D,
@@ -278,33 +278,44 @@ impl ZeroTensorProducer {
         offset: usize,
     ) -> Result<(usize, usize, usize), ZTProducerErr<D::Error>> {
         let current_batch_size = batch_indices.len();
-        let first_idx = batch_indices[0];
 
-        let dt = first_meta.dt();
-        let ndims = (first_meta.shape().len() + 1) as u8;
+        let layout =
+            dataset
+                .get_batch_layout(batch_indices)
+                .map_err(|e| ZTProducerErr::DatasetError {
+                    idx: e.index(),
+                    source: e,
+                })?;
+        let dt = layout.dt();
+        let shape = layout.shape();
+        let ndims = shape.len() + 1;
+        let strides = layout.strides();
+        assert_eq!(
+            strides.len() + 1,
+            ndims,
+            "Different ndims in shape and strides"
+        );
 
-        let mut batch_shape = vec![current_batch_size as ShapeType];
-        batch_shape.extend_from_slice(first_meta.shape());
+        let mut batch_shape = ShapeVec::with_capacity(ndims);
+        batch_shape.push(current_batch_size as ShapeType);
+        batch_shape.extend_from_slice(shape);
 
-        let element_strides = first_meta.strides();
-        let element_size_elements = first_meta
-            .shape()
-            .iter()
-            .zip(element_strides.iter())
-            .map(|(dim, stride)| (dim - 1) * stride)
-            .sum::<StrideType>()
-            + 1;
+        let element_size_bytes = layout.total_elements() * get_dt_size(dt);
+        assert!(
+            element_size_bytes > 0,
+            "Element size must be greater than 0"
+        );
 
-        let element_size_bytes = element_size_elements as usize * get_dt_size(dt);
-        let mut batch_strides = vec![element_size_bytes as StrideType];
+        let dt_size = get_dt_size(dt) as StrideType;
+        let mut batch_strides = StrideVec::with_capacity(ndims);
 
-        let mut converted_element_strides = element_strides.to_vec();
-        for stride in &mut converted_element_strides {
-            *stride *= get_dt_size(dt) as StrideType;
+        batch_strides.push(element_size_bytes as StrideType);
+
+        for &s in layout.strides() {
+            batch_strides.push(s * dt_size);
         }
-        batch_strides.extend_from_slice(&converted_element_strides);
 
-        let header_meta = TensorHeader::new(dt, ndims);
+        let header_meta = TensorHeader::new(dt, ndims as u8);
         let offs = header_meta.get_offsets();
 
         self.buffer
@@ -329,23 +340,26 @@ impl ZeroTensorProducer {
                 .get_item_slice_mut(offset, data_start_offset, total_data_bytes)
         };
 
-       raw_shm_slice
+        raw_shm_slice
             .par_chunks_mut(element_size_bytes)
             .zip(batch_indices)
             .try_for_each(|(shm_chunk, &i)| -> Result<(), ZTProducerErr<D::Error>> {
                 if !self.running.load(Ordering::SeqCst) {
                     return Err(io::Error::from(io::ErrorKind::Interrupted).into());
                 }
-                dataset.write_item_into(i, shm_chunk).map_err(|e| {
-                    ZTProducerErr::DatasetError { idx: i, source: e }
-                })?;
+                dataset
+                    .write_item_into(i, shm_chunk)
+                    .map_err(|e| ZTProducerErr::DatasetError {
+                        idx: Some(i),
+                        source: e,
+                    })?;
 
                 if !self.running.load(Ordering::SeqCst) {
                     return Err(io::Error::from(io::ErrorKind::Interrupted).into());
                 }
 
-                return Ok(())
-            });
+                Ok(())
+            })?;
 
         Ok(())
     }
@@ -362,9 +376,9 @@ impl ZeroTensorProducer {
                 return Err(io::Error::from(io::ErrorKind::Interrupted));
             }
 
-            match reader.read_line(buf)? {
-                0 => return Ok(()),
-                _ => {
+            match reader.read_line(buf) {
+                Ok(0) => return Ok(()),
+                Ok(_) => {
                     let trimmed = buf.trim();
                     if trimmed != CONSUMER_RESPONSE {
                         panic!("Unexpected protocol violation from consumer: '{}'", trimmed);
@@ -372,6 +386,19 @@ impl ZeroTensorProducer {
                     buf.clear();
                     return Ok(());
                 }
+                Err(e)
+                    if e.kind() == io::ErrorKind::WouldBlock
+                        || e.kind() == io::ErrorKind::TimedOut =>
+                {
+                    let el = start_time.elapsed();
+                    if let Some(rt) = self.read_timeout
+                        && el.as_millis() >= rt as u128
+                    {
+                        return Err(e);
+                    }
+                    continue;
+                }
+                Err(e) => return Err(e),
             }
         }
     }

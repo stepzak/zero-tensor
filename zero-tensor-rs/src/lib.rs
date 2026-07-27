@@ -11,8 +11,8 @@ mod tests {
     use std::time::Duration;
     use tempfile::tempdir;
 
+    use crate::buffer::ZeroTensorBuffer;
     use crate::buffer::tensor_meta::TensorHeader;
-    use crate::buffer::{ZeroTensorBuffer, get_dt_size};
     use crate::dataset::ZeroTensorDataset;
     use crate::dataset::item::{ShapeType, StrideType, TensorBatchLayout, TensorDT};
     use crate::producer::{CONSUMER_RESP_BUFFER, ZeroTensorProducerBuilder};
@@ -27,13 +27,16 @@ mod tests {
             let shape = vec![2, 3];
             let strides = vec![3, 1];
             let dt = TensorDT::F32;
-            let meta = TensorBatchLayout::new(shape, strides, dt);
+            let meta = TensorBatchLayout::new(shape.into(), strides.into(), dt);
 
             Self { len, meta }
         }
     }
 
     impl ZeroTensorDataset for MockDataset {
+        type Error = std::io::Error;
+        type Meta = TensorBatchLayout;
+
         fn len(&self) -> usize {
             self.len
         }
@@ -42,18 +45,17 @@ mod tests {
             self.len == 0
         }
 
-        fn get_metadata(&self, _idx: usize) -> Option<TensorBatchLayout> {
-            Some(self.meta.clone())
+        fn get_batch_layout(&self, _idxs: &[usize]) -> Result<TensorBatchLayout, Self::Error> {
+            Ok(self.meta.clone())
         }
 
-        fn write_item_into(&self, idx: usize, buf: &mut [u8]) -> Option<TensorBatchLayout> {
+        fn write_item_into(&self, idx: usize, buf: &mut [u8]) -> Result<(), Self::Error> {
             if idx >= self.len {
-                return None;
+                return Err(std::io::ErrorKind::InvalidData.into());
             }
-            let meta = self.get_metadata(idx)?;
-
-            let total_elements = meta.shape().iter().product::<ShapeType>() as usize;
-            let total_bytes = total_elements * get_dt_size(meta.dt());
+            let meta = self.get_batch_layout(&[idx])?;
+            let total_elements = meta.total_elements();
+            let total_bytes = meta.total_bytes();
 
             match meta.dt() {
                 TensorDT::F32 => {
@@ -70,7 +72,7 @@ mod tests {
                 }
             }
 
-            Some(meta)
+            Ok(())
         }
     }
 
@@ -85,7 +87,8 @@ mod tests {
         let slot_size = 2048;
 
         let dataset = MockDataset::new(batch_size * steps);
-        let meta = dataset.get_metadata(0).unwrap();
+        let idxs = [0];
+        let meta = dataset.get_batch_layout(&idxs).unwrap();
         let mut producer = ZeroTensorProducerBuilder::new(steps, slot_size, shm_name, &socket_path)
             .build()
             .expect("Failed to init producer");
