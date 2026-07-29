@@ -33,6 +33,12 @@ pub enum ZTBufErr {
 
     #[error("mmap failed")]
     MmapFail,
+
+    #[error("Invalid shape(Strides length must match shape dimensions, got {0} vs {1})")]
+    InvalidShape(u8, u8),
+
+    #[error("Buffer overflow(total size: {0}, needed: {1}")]
+    BufferOverflow(usize, usize),
 }
 
 #[inline]
@@ -109,6 +115,9 @@ impl ZeroTensorBuffer {
         let prot = libc::PROT_READ | libc::PROT_WRITE;
         let flags = libc::MAP_SHARED;
         let addr = Self::mmap(fd, total_size, prot, flags)? as *mut u8;
+        unsafe {
+            ptr::write_bytes(addr, 0, total_size);
+        }
 
         Ok(ZeroTensorBuffer {
             addr,
@@ -147,23 +156,23 @@ impl ZeroTensorBuffer {
         strides: &[StrideType],
         dt: TensorDT,
         raw_data: &[u8],
-    ) {
+    ) -> Result<(), ZTBufErr> {
         let ndims = shape.len() as u8;
-        assert_eq!(
-            strides.len(),
-            ndims as usize,
-            "Strides length must match shape dimensions"
-        );
+        let ndims_strides = strides.len() as u8;
+        if ndims_strides != ndims {
+            return Err(ZTBufErr::InvalidShape(ndims_strides, ndims));
+        }
+
         let meta = TensorHeader::new(dt, ndims);
         let base = unsafe { self.addr.add(offset) };
         let offs = meta.get_offsets();
 
         let data_count: u32 = shape.iter().product();
         let data_size = get_dt_size(dt) * data_count as usize;
-        assert!(
-            offset + offs.data() + data_size <= self.total_size,
-            "Buffer overflow"
-        );
+        let t_size = offset + offs.data() + data_size;
+        if t_size > self.total_size {
+            return Err(ZTBufErr::BufferOverflow(self.total_size, t_size));
+        }
 
         let header_ptr = base as *mut TensorHeader;
         unsafe { header_ptr.write(meta) };
@@ -182,6 +191,7 @@ impl ZeroTensorBuffer {
                 ptr::copy_nonoverlapping(raw_data.as_ptr(), data_ptr, data_size);
             }
         }
+        Ok(())
     }
 
     /// # Safety
@@ -191,13 +201,13 @@ impl ZeroTensorBuffer {
         slot_offset: usize,
         data_offset_in_slot: usize,
         len: usize,
-    ) -> &mut [u8] {
-        assert!(
-            slot_offset + data_offset_in_slot + len <= self.total_size,
-            "Slice out of bounds"
-        );
+    ) -> Result<&mut [u8], ZTBufErr> {
+        let t_size = slot_offset + data_offset_in_slot + len;
+        if t_size > self.total_size {
+            return Err(ZTBufErr::BufferOverflow(self.total_size, t_size));
+        }
         let ptr = unsafe { self.addr.add(slot_offset).add(data_offset_in_slot) };
-        unsafe { std::slice::from_raw_parts_mut(ptr, len) }
+        Ok(unsafe { std::slice::from_raw_parts_mut(ptr, len) })
     }
 
     pub fn get_item_slice(
@@ -205,22 +215,22 @@ impl ZeroTensorBuffer {
         slot_offset: usize,
         data_offset_in_slot: usize,
         len: usize,
-    ) -> &[u8] {
-        assert!(
-            slot_offset + data_offset_in_slot + len <= self.total_size,
-            "Slice out of bounds"
-        );
+    ) -> Result<&[u8], ZTBufErr> {
+        let t_size = slot_offset + data_offset_in_slot + len;
+        if t_size > self.total_size {
+            return Err(ZTBufErr::BufferOverflow(self.total_size, t_size));
+        }
         let ptr = unsafe { self.addr.add(slot_offset).add(data_offset_in_slot) };
-        unsafe { std::slice::from_raw_parts(ptr, len) }
+        Ok(unsafe { std::slice::from_raw_parts(ptr, len) })
     }
 
-    pub fn get_slot_slice(&self, slot_offset: usize, slot_size: usize) -> &[u8] {
-        assert!(
-            slot_offset + slot_size <= self.total_size,
-            "Slice out of bounds"
-        );
+    pub fn get_slot_slice(&self, slot_offset: usize, slot_size: usize) -> Result<&[u8], ZTBufErr> {
+        let t_size = slot_offset + slot_size;
+        if t_size > self.total_size {
+            return Err(ZTBufErr::BufferOverflow(self.total_size, t_size));
+        }
         let ptr = unsafe { self.addr.add(slot_offset) };
-        unsafe { std::slice::from_raw_parts(ptr, slot_size) }
+        Ok(unsafe { std::slice::from_raw_parts(ptr, slot_size) })
     }
 }
 

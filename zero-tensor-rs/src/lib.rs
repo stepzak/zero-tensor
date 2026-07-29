@@ -125,7 +125,7 @@ mod tests {
                 let expected_offset = (step % 2) * slot_size;
                 assert_eq!(offset, expected_offset);
 
-                let slot_bytes = consumer_buffer.get_slot_slice(offset, slot_size);
+                let slot_bytes = consumer_buffer.get_slot_slice(offset, slot_size).unwrap();
 
                 let header_ptr = slot_bytes.as_ptr() as *const TensorHeader;
                 let header = unsafe { &*header_ptr };

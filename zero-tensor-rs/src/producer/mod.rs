@@ -71,6 +71,9 @@ pub enum ZTProducerErr<E: ZTDatasetError + 'static> {
         #[source]
         source: E,
     },
+
+    #[error("{0}")]
+    ProtocolError(String),
 }
 
 #[derive(Clone, Debug)]
@@ -249,7 +252,15 @@ impl ZeroTensorProducer {
                 .map_err(ZTProducerErr::IoError)?;
             stream.flush().map_err(ZTProducerErr::IoError)?;
 
-            self.wait_for_release(&mut reader, &mut buf)?;
+            match self.wait_for_release(&mut reader, &mut buf) {
+                Ok(()) => {}
+                Err(ref e) if e.kind() == io::ErrorKind::InvalidData => {
+                    return Err(ZTProducerErr::ProtocolError(e.to_string()));
+                }
+                Err(e) => {
+                    return Err(e.into());
+                }
+            }
 
             self.current_step += 1;
         }
@@ -290,21 +301,16 @@ impl ZeroTensorProducer {
         let shape = layout.shape();
         let ndims = shape.len() + 1;
         let strides = layout.strides();
-        assert_eq!(
-            strides.len() + 1,
-            ndims,
-            "Different ndims in shape and strides"
-        );
+
+        if strides.len() + 1 != ndims {
+            return Err(ZTBufErr::InvalidShape(strides.len() as u8 + 1, ndims as u8).into());
+        }
 
         let mut batch_shape = ShapeVec::with_capacity(ndims);
         batch_shape.push(current_batch_size as ShapeType);
         batch_shape.extend_from_slice(shape);
 
         let element_size_bytes = layout.total_elements() * get_dt_size(dt);
-        assert!(
-            element_size_bytes > 0,
-            "Element size must be greater than 0"
-        );
 
         let dt_size = get_dt_size(dt) as StrideType;
         let mut batch_strides = StrideVec::with_capacity(ndims);
@@ -319,7 +325,7 @@ impl ZeroTensorProducer {
         let offs = header_meta.get_offsets();
 
         self.buffer
-            .write_tensor(offset, &batch_shape, &batch_strides, dt, &[]);
+            .write_tensor(offset, &batch_shape, &batch_strides, dt, &[])?;
 
         let total_data_bytes = current_batch_size * element_size_bytes;
 
@@ -338,7 +344,7 @@ impl ZeroTensorProducer {
         let raw_shm_slice = unsafe {
             self.buffer
                 .get_item_slice_mut(offset, data_start_offset, total_data_bytes)
-        };
+        }?;
 
         raw_shm_slice.fill(0);
 
@@ -383,7 +389,10 @@ impl ZeroTensorProducer {
                 Ok(_) => {
                     let trimmed = buf.trim();
                     if trimmed != CONSUMER_RESPONSE {
-                        panic!("Unexpected protocol violation from consumer: '{}'", trimmed);
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("Unexpected protocol violation from consumer: '{}'", trimmed),
+                        ));
                     }
                     buf.clear();
                     return Ok(());
