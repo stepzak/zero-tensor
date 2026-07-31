@@ -11,8 +11,8 @@ mod tests {
     use std::time::Duration;
     use tempfile::tempdir;
 
-    use crate::buffer::{ZTBufErr, ZeroTensorBuffer};
     use crate::buffer::tensor_meta::TensorHeader;
+    use crate::buffer::{ZTBufErr, ZeroTensorBuffer};
     use crate::dataset::ZeroTensorDataset;
     use crate::dataset::item::{ShapeType, StrideType, TensorBatchLayout, TensorDT};
     use crate::producer::{CONSUMER_RESP_BUFFER, ZeroTensorProducerBuilder};
@@ -77,20 +77,27 @@ mod tests {
 
     struct FailingDataset;
 
-impl ZeroTensorDataset for FailingDataset {
-    type Error = std::io::Error;
+    impl ZeroTensorDataset for FailingDataset {
+        type Error = std::io::Error;
 
-    fn len(&self) -> usize { 10 }
-    fn is_empty(&self) -> bool { false }
+        fn len(&self) -> usize {
+            10
+        }
+        fn is_empty(&self) -> bool {
+            false
+        }
 
-    fn get_batch_layout(&self, _idxs: &[usize]) -> Result<TensorBatchLayout, Self::Error> {
-        Err(std::io::Error::new(std::io::ErrorKind::Other, "Simulated dataset error"))
+        fn get_batch_layout(&self, _idxs: &[usize]) -> Result<TensorBatchLayout, Self::Error> {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "Simulated dataset error",
+            ))
+        }
+
+        fn write_item_into(&self, _idx: usize, _buf: &mut [u8]) -> Result<(), Self::Error> {
+            Ok(())
+        }
     }
-
-    fn write_item_into(&self, _idx: usize, _buf: &mut [u8]) -> Result<(), Self::Error> {
-        Ok(())
-    }
-}
 
     #[test]
     fn test_end_to_end_streaming() {
@@ -358,6 +365,5 @@ impl ZeroTensorDataset for FailingDataset {
         let res = producer.start_streaming(&dataset, batch_size);
         let _ = consumer_handle.join();
         assert!(res.is_err())
-        
     }
 }
