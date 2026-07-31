@@ -37,7 +37,6 @@ impl BenchDataset {
 
 impl ZeroTensorDataset for BenchDataset {
     type Error = std::io::Error;
-    type Meta = TensorBatchLayout;
 
     fn len(&self) -> usize {
         BATCH_SIZE * STEPS

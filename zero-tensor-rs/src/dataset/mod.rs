@@ -18,7 +18,6 @@ impl ZTDatasetError for std::io::Error {
 
 pub trait ZeroTensorDataset: Send + Sync {
     type Error: ZTDatasetError;
-    type Meta: Clone + Send + Sync;
 
     fn len(&self) -> usize;
 

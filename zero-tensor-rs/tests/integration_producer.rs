@@ -41,7 +41,6 @@ impl DynamicDataset {
 
 impl ZeroTensorDataset for DynamicDataset {
     type Error = TestError;
-    type Meta = TensorBatchLayout;
 
     fn len(&self) -> usize {
         self.shapes.len()

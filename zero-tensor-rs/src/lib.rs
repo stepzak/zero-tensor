@@ -11,7 +11,7 @@ mod tests {
     use std::time::Duration;
     use tempfile::tempdir;
 
-    use crate::buffer::ZeroTensorBuffer;
+    use crate::buffer::{ZTBufErr, ZeroTensorBuffer};
     use crate::buffer::tensor_meta::TensorHeader;
     use crate::dataset::ZeroTensorDataset;
     use crate::dataset::item::{ShapeType, StrideType, TensorBatchLayout, TensorDT};
@@ -35,7 +35,6 @@ mod tests {
 
     impl ZeroTensorDataset for MockDataset {
         type Error = std::io::Error;
-        type Meta = TensorBatchLayout;
 
         fn len(&self) -> usize {
             self.len
@@ -75,6 +74,23 @@ mod tests {
             Ok(())
         }
     }
+
+    struct FailingDataset;
+
+impl ZeroTensorDataset for FailingDataset {
+    type Error = std::io::Error;
+
+    fn len(&self) -> usize { 10 }
+    fn is_empty(&self) -> bool { false }
+
+    fn get_batch_layout(&self, _idxs: &[usize]) -> Result<TensorBatchLayout, Self::Error> {
+        Err(std::io::Error::new(std::io::ErrorKind::Other, "Simulated dataset error"))
+    }
+
+    fn write_item_into(&self, _idx: usize, _buf: &mut [u8]) -> Result<(), Self::Error> {
+        Ok(())
+    }
+}
 
     #[test]
     fn test_end_to_end_streaming() {
@@ -260,5 +276,88 @@ mod tests {
             epoch0, epoch1,
             "Epochs must have different shuffle patterns"
         );
+    }
+
+    #[test]
+    fn test_filename_too_long() {
+        let fname = "a".repeat(300);
+        let res = ZeroTensorBuffer::new(&fname, 1);
+        assert!(matches!(res, Err(ZTBufErr::InvalidFilename(_))));
+    }
+
+    #[test]
+    fn test_filename_nullbyte() {
+        let fname = "abcd\0efgh";
+        let res = ZeroTensorBuffer::new(&fname, 1);
+        assert!(matches!(res, Err(ZTBufErr::InvalidFilename(_))));
+    }
+
+    #[test]
+    fn test_filename_slash() {
+        let fname = "abcd/efgh";
+        let res = ZeroTensorBuffer::new(&fname, 1);
+        assert!(matches!(res, Err(ZTBufErr::InvalidFilename(_))));
+    }
+
+    #[test]
+    fn test_buf_overflow() {
+        let mut buf = ZeroTensorBuffer::new("zt_buf_test", 1024).unwrap();
+        let shape = vec![100, 100];
+        let strides = vec![100, 1];
+        let data = vec![0u8; 40000];
+        let res = buf.write_tensor(0, &shape, &strides, TensorDT::F16, &data);
+        assert!(matches!(res, Err(ZTBufErr::BufferOverflow(1024, _))));
+    }
+
+    #[test]
+    fn test_shape_stride_mismatch() {
+        let mut buf = ZeroTensorBuffer::new("zt_buf_test", 1024).unwrap();
+        let shape = vec![100, 100];
+        let strides = vec![100, 1, 2];
+        let data = vec![0u8; 10000 * 4];
+        let res = buf.write_tensor(0, &shape, &strides, TensorDT::F16, &data);
+        assert!(matches!(res, Err(ZTBufErr::InvalidShape(3, 2))))
+    }
+
+    #[test]
+    fn test_dataset_failure() {
+        let dir = tempdir().unwrap();
+        let socket_path = dir.path().join("zero_tensor.sock");
+        let shm_name = "zt_test_buffer";
+
+        let batch_size = 2;
+        let steps = 2;
+        let slot_size = 2048;
+
+        let dataset = FailingDataset;
+        let mut producer = ZeroTensorProducerBuilder::new(steps, slot_size, shm_name, &socket_path)
+            .build()
+            .expect("Failed to init producer");
+
+        let consumer_socket = socket_path.clone();
+        let consumer_shm_name = shm_name.to_string();
+
+        let consumer_handle = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(20));
+
+            let mut stream = UnixStream::connect(&consumer_socket)
+                .expect("Consumer failed to connect to socket");
+
+            let _ = ZeroTensorBuffer::open(&consumer_shm_name, slot_size * 2)
+                .expect("Consumer failed to open SHM");
+
+            let mut sock_buf = [0; CONSUMER_RESP_BUFFER];
+
+            for _ in 0..steps {
+                let _ = stream
+                    .read(&mut sock_buf)
+                    .expect("Failed to read from socket");
+            }
+        });
+
+        let res = producer.start_streaming(&dataset, batch_size);
+        let _ = consumer_handle.join();
+        assert!(res.is_err())
+        
     }
 }
