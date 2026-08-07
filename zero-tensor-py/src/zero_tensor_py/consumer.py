@@ -32,7 +32,10 @@ class ZeroTensorConsumer:
                     pass
             self.mem = None
         if self.sock is not None:
-            self.sock.sendall(b"STOP\n")
+            try:
+                self.sock.sendall(b"STOP\n")
+            except BrokenPipeError:
+                pass 
             self.sock.close()
             self.sock = None
         if self.shm_file is not None:
