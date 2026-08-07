@@ -82,10 +82,9 @@ fn main() {
         slot_size as f64 / 1024.0 / 1024.0
     );
 
-    let mut producer =
-        ZeroTensorProducerBuilder::new(STEPS, slot_size as usize, shm_name, socket_path)
-            .build()
-            .expect("Failed to create producer");
+    let mut producer = ZeroTensorProducerBuilder::new(slot_size as usize, shm_name, socket_path)
+        .build()
+        .expect("Failed to create producer");
 
     let dataset = BenchDataset::new(raw_item_size as usize);
 

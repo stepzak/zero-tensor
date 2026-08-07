@@ -32,6 +32,7 @@ class ZeroTensorConsumer:
                     pass
             self.mem = None
         if self.sock is not None:
+            self.sock.sendall(b"STOP\n")
             self.sock.close()
             self.sock = None
         if self.shm_file is not None:
@@ -62,7 +63,10 @@ class ZeroTensorConsumer:
     def __iter__(self) -> Generator[torch.Tensor, None, None]:
         if self.sock is None or self.shm_file is None:
             raise RuntimeError("Consumer is not connected. Use 'with' or 'connect'")
-
+        return self._iter_epoch()
+       
+                
+    def _iter_epoch(self):
         buf = bytearray()
         while True:
             c = self.sock.recv(8192)
@@ -70,7 +74,6 @@ class ZeroTensorConsumer:
                 break
 
             buf.extend(c)
-
             while b'\n' in buf:
                 line, buf = buf.split(b'\n', 1)
                 msg = line.decode('utf-8').strip()
@@ -88,3 +91,5 @@ class ZeroTensorConsumer:
                     yield batch_tensor
 
                     self.sock.sendall(b"RELEASE\n")
+                elif msg.startswith("EPOCH_DONE"):
+                    return
