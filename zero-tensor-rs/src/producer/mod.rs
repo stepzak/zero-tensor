@@ -14,7 +14,7 @@ use std::{
     io::{self, Write},
     os::unix::net::{UnixListener, UnixStream},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use std::{
     io::{BufRead, BufReader},
@@ -30,15 +30,35 @@ use std::{
 use thiserror::Error;
 
 pub const DEFAULT_SLOTS: usize = 2;
-pub const CONSUMER_RESPONSE: &str = "RELEASE";
-pub const CONSUMER_RESP_BUFFER: usize = CONSUMER_RESPONSE.len() * 2;
+pub const CONSUMER_RELEASE: &str = "RELEASE";
+pub const CONSUMER_STOP: &str = "STOP";
+pub const PRODUCER_EPOCH_DONE: &str = "EPOCH_DONE\n";
+pub const CONSUMER_RESP_BUFFER: usize = get_max_resp_len() * 2;
 pub const DEFAULT_TIMEOUT_CHECK_CTRLC: u64 = 500;
+
+const fn const_max_usize(a: usize, b: usize) -> usize {
+    if a > b { a } else { b }
+}
+
+const fn get_max_resp_len() -> usize {
+    const_max_usize(CONSUMER_RELEASE.len(), CONSUMER_STOP.len())
+}
+
+#[derive(Debug, Clone)]
+enum ZTConsumerCmd {
+    Release,
+    Stop,
+}
+
+#[derive(Debug, Clone)]
+enum ZTProducerCmd {
+    Ready { offset: usize },
+    EpochEnd,
+}
 
 pub struct ZeroTensorProducer {
     buffer: ZeroTensorBuffer,
     slot_size: usize,
-    current_step: usize,
-    steps: usize,
     nslots: usize,
     listener: UnixListener,
     sock_path: PathBuf,
@@ -46,6 +66,7 @@ pub struct ZeroTensorProducer {
     read_timeout: Option<u64>,
     shuffle: bool,
     seed: Option<u64>,
+    max_steps: Option<usize>,
 }
 
 #[derive(Debug, Error)]
@@ -79,7 +100,6 @@ pub enum ZTProducerErr<E: ZTDatasetError + 'static> {
 #[derive(Clone, Debug)]
 pub struct ZeroTensorProducerBuilder {
     // Required
-    steps: usize,
     step_size: usize,
     shm_filename: String,
     socket_addr: PathBuf,
@@ -90,17 +110,12 @@ pub struct ZeroTensorProducerBuilder {
     overwrite_socket: bool,
     shuffle: bool,
     seed: Option<u64>,
+    max_steps: Option<usize>,
 }
 
 impl ZeroTensorProducerBuilder {
-    pub fn new<P: AsRef<Path>>(
-        steps: usize,
-        step_size: usize,
-        shm_filename: &str,
-        socket_addr: P,
-    ) -> Self {
+    pub fn new<P: AsRef<Path>>(step_size: usize, shm_filename: &str, socket_addr: P) -> Self {
         Self {
-            steps,
             step_size,
             shm_filename: shm_filename.to_string(),
             socket_addr: socket_addr.as_ref().to_path_buf(),
@@ -109,6 +124,7 @@ impl ZeroTensorProducerBuilder {
             overwrite_socket: false,
             shuffle: false,
             seed: None,
+            max_steps: None,
         }
     }
 
@@ -132,8 +148,13 @@ impl ZeroTensorProducerBuilder {
         self
     }
 
-    pub fn seed(&mut self, seed: u64) -> &Self {
+    pub fn seed(mut self, seed: u64) -> Self {
         self.seed = Some(seed);
+        self
+    }
+
+    pub fn max_steps<M: Into<Option<usize>>>(mut self, max_steps: M) -> Self {
+        self.max_steps = max_steps.into();
         self
     }
 
@@ -163,8 +184,6 @@ impl ZeroTensorProducerBuilder {
         Ok(ZeroTensorProducer {
             buffer,
             slot_size: self.step_size,
-            steps: self.steps,
-            current_step: 0,
             listener,
             nslots: self.num_slots,
             sock_path: self.socket_addr,
@@ -172,6 +191,7 @@ impl ZeroTensorProducerBuilder {
             running,
             shuffle: self.shuffle,
             seed: self.seed,
+            max_steps: self.max_steps,
         })
     }
 }
@@ -179,6 +199,74 @@ impl ZeroTensorProducerBuilder {
 impl ZeroTensorProducer {
     pub fn from_builder(builder: ZeroTensorProducerBuilder) -> Result<Self, ZTProducerNewErr> {
         builder.build()
+    }
+
+    fn next_command(
+        &self,
+        reader: &mut BufReader<UnixStream>,
+        buf: &mut String,
+    ) -> Result<ZTConsumerCmd, io::Error> {
+        let start_time = Instant::now();
+        buf.clear();
+        loop {
+            if !self.running.load(Ordering::SeqCst) {
+                return Err(io::Error::from(io::ErrorKind::Interrupted));
+            }
+
+            match reader.read_line(buf) {
+                Ok(0) => {
+                    return Ok(ZTConsumerCmd::Stop);
+                }
+                Ok(_) => match buf.trim() {
+                    CONSUMER_RELEASE => {
+                        return Ok(ZTConsumerCmd::Release);
+                    }
+                    CONSUMER_STOP => return Ok(ZTConsumerCmd::Stop),
+                    _ => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!(
+                                "Unexpected protocol violation from consumer: '{}'",
+                                buf.trim()
+                            ),
+                        ));
+                    }
+                },
+                Err(e)
+                    if e.kind() == io::ErrorKind::WouldBlock
+                        || e.kind() == io::ErrorKind::TimedOut =>
+                {
+                    let el = start_time.elapsed();
+                    if let Some(rt) = self.read_timeout
+                        && el.as_millis() >= rt as u128
+                    {
+                        return Err(e);
+                    }
+                    continue;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+    }
+
+    fn wait_for_next_command(
+        &self,
+        reader: &mut BufReader<UnixStream>,
+        buf: &mut String,
+    ) -> Result<ZTConsumerCmd, io::Error> {
+        self.next_command(reader, buf)
+    }
+
+    fn send_cmd(stream: &mut UnixStream, cmd: ZTProducerCmd) -> Result<(), io::Error> {
+        match cmd {
+            ZTProducerCmd::EpochEnd => {
+                stream.write_all(PRODUCER_EPOCH_DONE.as_bytes())?;
+            }
+            ZTProducerCmd::Ready { offset } => {
+                writeln!(stream, "READY {}", offset)?;
+            }
+        }
+        stream.flush()
     }
 
     fn start_streaming_loop<D: ZeroTensorDataset>(
@@ -196,73 +284,76 @@ impl ZeroTensorProducer {
             DEFAULT_TIMEOUT_CHECK_CTRLC,
             self.read_timeout.unwrap_or(DEFAULT_TIMEOUT_CHECK_CTRLC),
         );
-
         let steps_per_epoch = dataset.len().div_ceil(batch_size);
-        let mut current_epoch = usize::MAX;
+        let mut current_epoch = 0;
         let mut indices: Vec<usize> = (0..dataset.len()).collect();
-
         let mut reader = BufReader::new(stream.try_clone().map_err(ZTProducerErr::IoError)?);
         stream
             .set_read_timeout(Some(std::time::Duration::from_millis(timeout)))
             .map_err(ZTProducerErr::IoError)?;
-
         loop {
             if !self.running.load(Ordering::SeqCst) {
                 return Err(ZTProducerErr::IoError(io::Error::from(
                     io::ErrorKind::Interrupted,
                 )));
             }
-            if self.current_step == self.steps {
-                return Ok(());
+
+            if self.shuffle {
+                self.reshuffle_indices(&mut indices, current_epoch);
             }
 
-            let step_epoch = self.current_step / steps_per_epoch;
-            if step_epoch != current_epoch {
-                current_epoch = step_epoch;
-                self.reshuffle_indices(&mut indices, step_epoch);
-            }
-
-            let epoch_step = self.current_step % steps_per_epoch;
-            let start_idx = epoch_step * batch_size;
-            let end_idx = std::cmp::min(start_idx + batch_size, dataset.len());
-
-            if start_idx >= end_idx {
-                self.current_step += 1;
-                continue;
-            }
-
-            let batch_indices = &indices[start_idx..end_idx];
-            let offset = (self.current_step % self.nslots) * self.slot_size;
-
-            let (data_start_offset, total_data_bytes, element_size_bytes) =
-                self.prepare_batch_metadata(dataset, batch_indices, offset)?;
-
-            self.copy_batch_to_shm(
-                dataset,
-                batch_indices,
-                offset,
-                data_start_offset,
-                total_data_bytes,
-                element_size_bytes,
-            )?;
-
-            let msg = format!("READY {}\n", offset);
-            stream
-                .write_all(msg.as_bytes())
-                .map_err(ZTProducerErr::IoError)?;
-            stream.flush().map_err(ZTProducerErr::IoError)?;
-
-            match self.wait_for_release(&mut reader, &mut buf) {
-                Ok(()) => {}
-                Err(ref e) if e.kind() == io::ErrorKind::InvalidData => {
-                    return Err(ZTProducerErr::ProtocolError(e.to_string()));
+            let mut epoch_step = 0;
+            while epoch_step < steps_per_epoch {
+                if let Some(max) = self.max_steps
+                    && current_epoch * steps_per_epoch + epoch_step >= max
+                {
+                    return Ok(());
                 }
-                Err(e) => {
-                    return Err(e.into());
+
+                let start_idx = epoch_step * batch_size;
+                let end_idx = std::cmp::min(start_idx + batch_size, dataset.len());
+
+                if start_idx >= end_idx {
+                    epoch_step += 1;
+                    continue;
                 }
+
+                let batch_indices = &indices[start_idx..end_idx];
+                let offset = (epoch_step % self.nslots) * self.slot_size;
+
+                let (data_start_offset, total_data_bytes, element_size_bytes) =
+                    self.prepare_batch_metadata(dataset, batch_indices, offset)?;
+
+                self.copy_batch_to_shm(
+                    dataset,
+                    batch_indices,
+                    offset,
+                    data_start_offset,
+                    total_data_bytes,
+                    element_size_bytes,
+                )?;
+
+                let cmd_to_send = ZTProducerCmd::Ready { offset };
+                Self::send_cmd(stream, cmd_to_send).map_err(ZTProducerErr::IoError)?;
+                let cmd = match self.wait_for_next_command(&mut reader, &mut buf) {
+                    Ok(cmd) => cmd,
+                    Err(ref e) if e.kind() == io::ErrorKind::InvalidData => {
+                        return Err(ZTProducerErr::ProtocolError(e.to_string()));
+                    }
+                    Err(e) => {
+                        return Err(e.into());
+                    }
+                };
+
+                match cmd {
+                    ZTConsumerCmd::Stop => return Ok(()),
+                    ZTConsumerCmd::Release => {}
+                }
+                epoch_step += 1;
             }
 
-            self.current_step += 1;
+            current_epoch += 1;
+            Self::send_cmd(stream, ZTProducerCmd::EpochEnd).map_err(ZTProducerErr::IoError)?;
         }
     }
 
@@ -347,71 +438,46 @@ impl ZeroTensorProducer {
         }?;
 
         raw_shm_slice.fill(0);
+        const RAYON_THRESHOLD: usize = 256 * 1024;
 
-        raw_shm_slice
-            .par_chunks_mut(element_size_bytes)
-            .zip(batch_indices)
-            .try_for_each(|(shm_chunk, &i)| -> Result<(), ZTProducerErr<D::Error>> {
-                if !self.running.load(Ordering::SeqCst) {
-                    return Err(io::Error::from(io::ErrorKind::Interrupted).into());
-                }
-                dataset
-                    .write_item_into(i, shm_chunk)
-                    .map_err(|e| ZTProducerErr::DatasetError {
-                        idx: Some(i),
-                        source: e,
+        if element_size_bytes < RAYON_THRESHOLD {
+            raw_shm_slice
+                .chunks_mut(element_size_bytes)
+                .zip(batch_indices)
+                .try_for_each(|(shm_chunk, &i)| -> Result<(), ZTProducerErr<D::Error>> {
+                    dataset.write_item_into(i, shm_chunk).map_err(|e| {
+                        ZTProducerErr::DatasetError {
+                            idx: Some(i),
+                            source: e,
+                        }
                     })?;
 
-                if !self.running.load(Ordering::SeqCst) {
-                    return Err(io::Error::from(io::ErrorKind::Interrupted).into());
-                }
+                    Ok(())
+                })?;
+        } else {
+            raw_shm_slice
+                .par_chunks_mut(element_size_bytes)
+                .zip(batch_indices)
+                .try_for_each(|(shm_chunk, &i)| -> Result<(), ZTProducerErr<D::Error>> {
+                    if !self.running.load(Ordering::SeqCst) {
+                        return Err(io::Error::from(io::ErrorKind::Interrupted).into());
+                    }
+                    dataset.write_item_into(i, shm_chunk).map_err(|e| {
+                        ZTProducerErr::DatasetError {
+                            idx: Some(i),
+                            source: e,
+                        }
+                    })?;
 
-                Ok(())
-            })?;
+                    if !self.running.load(Ordering::SeqCst) {
+                        return Err(io::Error::from(io::ErrorKind::Interrupted).into());
+                    }
+
+                    Ok(())
+                })?;
+        }
 
         Ok(())
-    }
-
-    fn wait_for_release(
-        &self,
-        reader: &mut BufReader<UnixStream>,
-        buf: &mut String,
-    ) -> Result<(), io::Error> {
-        let start_time = std::time::Instant::now();
-
-        loop {
-            if !self.running.load(Ordering::SeqCst) {
-                return Err(io::Error::from(io::ErrorKind::Interrupted));
-            }
-
-            match reader.read_line(buf) {
-                Ok(0) => return Ok(()),
-                Ok(_) => {
-                    let trimmed = buf.trim();
-                    if trimmed != CONSUMER_RESPONSE {
-                        return Err(io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            format!("Unexpected protocol violation from consumer: '{}'", trimmed),
-                        ));
-                    }
-                    buf.clear();
-                    return Ok(());
-                }
-                Err(e)
-                    if e.kind() == io::ErrorKind::WouldBlock
-                        || e.kind() == io::ErrorKind::TimedOut =>
-                {
-                    let el = start_time.elapsed();
-                    if let Some(rt) = self.read_timeout
-                        && el.as_millis() >= rt as u128
-                    {
-                        return Err(e);
-                    }
-                    continue;
-                }
-                Err(e) => return Err(e),
-            }
-        }
     }
 
     pub fn start_streaming<D: ZeroTensorDataset>(
@@ -419,7 +485,6 @@ impl ZeroTensorProducer {
         dataset: &D,
         batch_size: usize,
     ) -> Result<(), ZTProducerErr<D::Error>> {
-        self.current_step = 0;
         self.listener
             .set_nonblocking(true)
             .map_err(ZTProducerErr::IoError)?;

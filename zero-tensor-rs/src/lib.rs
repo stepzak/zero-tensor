@@ -110,9 +110,12 @@ mod tests {
         let slot_size = 2048;
 
         let dataset = MockDataset::new(batch_size * steps);
-        let idxs = [0];
-        let meta = dataset.get_batch_layout(&idxs).unwrap();
-        let mut producer = ZeroTensorProducerBuilder::new(steps, slot_size, shm_name, &socket_path)
+
+        let idxs: &[usize] = &[0];
+        let meta = dataset.get_batch_layout(idxs).unwrap();
+
+        let mut producer = ZeroTensorProducerBuilder::new(slot_size, shm_name, &socket_path)
+            .num_slots(2)
             .build()
             .expect("Failed to init producer");
 
@@ -120,76 +123,100 @@ mod tests {
         let consumer_shm_name = shm_name.to_string();
 
         let consumer_handle = thread::spawn(move || {
-            thread::sleep(Duration::from_millis(20));
+            thread::sleep(Duration::from_millis(50));
 
-            let mut stream = UnixStream::connect(&consumer_socket)
-                .expect("Consumer failed to connect to socket");
+            let mut stream = match UnixStream::connect(&consumer_socket) {
+                Ok(s) => s,
+                Err(e) => panic!(
+                    "Consumer failed to connect to socket {:?}: {}",
+                    consumer_socket, e
+                ),
+            };
 
-            let consumer_buffer = ZeroTensorBuffer::open(&consumer_shm_name, slot_size * 2)
-                .expect("Consumer failed to open SHM");
+            let consumer_buffer = match ZeroTensorBuffer::open(&consumer_shm_name, slot_size * 2) {
+                Ok(b) => b,
+                Err(e) => panic!("Consumer failed to open SHM {}: {}", consumer_shm_name, e),
+            };
 
             let mut sock_buf = [0; CONSUMER_RESP_BUFFER];
 
             for step in 0..steps {
-                let n = stream
-                    .read(&mut sock_buf)
-                    .expect("Failed to read from socket");
-                let msg = std::str::from_utf8(&sock_buf[..n]).unwrap();
-                assert!(msg.starts_with("READY"));
+                let n = match stream.read(&mut sock_buf) {
+                    Ok(n) if n > 0 => n,
+                    Ok(_) => panic!("Producer closed connection unexpectedly at step {}", step),
+                    Err(e) => panic!("Failed to read from socket at step {}: {}", step, e),
+                };
 
+                let msg = std::str::from_utf8(&sock_buf[..n])
+                    .unwrap_or_else(|_| panic!("Invalid UTF-8 message at step {}", step));
+
+                assert!(msg.starts_with("READY"), "Expected READY, got: {}", msg);
                 let offset: usize = msg
                     .trim_end()
                     .split_whitespace()
                     .nth(1)
-                    .unwrap()
-                    .parse()
-                    .expect("Failed to parse offset");
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or_else(|| panic!("Failed to parse offset from: {}", msg));
 
                 let expected_offset = (step % 2) * slot_size;
-                assert_eq!(offset, expected_offset);
+                assert_eq!(offset, expected_offset, "Offset mismatch at step {}", step);
 
-                let slot_bytes = consumer_buffer.get_slot_slice(offset, slot_size).unwrap();
+                let slot_bytes = consumer_buffer
+                    .get_slot_slice(offset, slot_size)
+                    .expect("Failed to get slot slice");
 
                 let header_ptr = slot_bytes.as_ptr() as *const TensorHeader;
                 let header = unsafe { &*header_ptr };
                 let offs = header.get_offsets();
 
-                assert_eq!(header.ndims(), 3);
-                assert_eq!(header.dt(), TensorDT::F32);
+                assert_eq!(header.ndims(), 3, "NDims mismatch");
+                assert_eq!(header.dt(), TensorDT::F32, "DataType mismatch");
 
                 let shape_ptr =
                     unsafe { slot_bytes.as_ptr().add(offs.shapes()) as *const ShapeType };
                 let read_shape = unsafe { std::slice::from_raw_parts(shape_ptr, 3) };
-                assert_eq!(read_shape, &[batch_size as ShapeType, 2, 3]);
+                assert_eq!(
+                    read_shape,
+                    &[batch_size as ShapeType, 2, 3],
+                    "Shape mismatch"
+                );
 
                 let strides_ptr =
                     unsafe { slot_bytes.as_ptr().add(offs.strides()) as *const StrideType };
                 let read_strides = unsafe { std::slice::from_raw_parts(strides_ptr, 3) };
-
-                assert_eq!(read_strides, &[24, 12, 4]);
+                assert_eq!(read_strides, &[24, 12, 4], "Strides mismatch");
 
                 let data_ptr = unsafe { slot_bytes.as_ptr().add(offs.data()) as *const f32 };
-
-                let idx_0 = step * batch_size;
-
                 let total_els = meta.shape().iter().product::<ShapeType>() as usize;
-                (0..total_els).for_each(|i| {
-                    assert_eq!(unsafe { *data_ptr.add(i) }, i as f32 * 0.5 + idx_0 as f32);
-                });
 
-                thread::sleep(Duration::from_millis(10));
+                for i in 0..total_els {
+                    let expected_val = i as f32 * 0.5 + (step * batch_size) as f32;
+                    let actual_val = unsafe { *data_ptr.add(i) };
+                    assert_eq!(
+                        actual_val, expected_val,
+                        "Data mismatch at index {} in step {}",
+                        i, step
+                    );
+                }
 
-                stream
-                    .write_all(b"RELEASE\n")
-                    .expect("Failed to write RELEASE");
-                stream.flush().unwrap();
+                thread::sleep(Duration::from_millis(5));
+
+                if let Err(e) = stream.write_all(b"RELEASE\n") {
+                    panic!("Failed to send RELEASE at step {}: {}", step, e);
+                }
+                if let Err(e) = stream.flush() {
+                    panic!("Failed to flush at step {}: {}", step, e);
+                }
+            }
+
+            if let Err(e) = stream.write_all(b"STOP\n") {
+                eprintln!("Warning: Failed to send STOP: {}", e);
+            } else {
+                let _ = stream.flush();
             }
         });
 
-        producer
-            .start_streaming(&dataset, batch_size)
-            .expect("Streaming failed");
-
+        let _ = producer.start_streaming(&dataset, batch_size);
         consumer_handle.join().expect("Consumer thread panicked");
     }
 
@@ -200,7 +227,7 @@ mod tests {
         let shm_name = "zt_integration_test_shm";
 
         {
-            let _ = ZeroTensorProducerBuilder::new(10, 4096, shm_name, &sock_path)
+            let _ = ZeroTensorProducerBuilder::new(4096, shm_name, &sock_path)
                 .overwrite_socket(true)
                 .read_timeout(1000)
                 .build()
@@ -231,7 +258,7 @@ mod tests {
         let handle = std::thread::spawn({
             let sock_path = sock_path.clone();
             move || {
-                let _producer = ZeroTensorProducerBuilder::new(10, 4096, shm_name, &sock_path)
+                let _producer = ZeroTensorProducerBuilder::new(4096, shm_name, &sock_path)
                     .read_timeout(1000)
                     .build()
                     .unwrap();
@@ -337,7 +364,7 @@ mod tests {
         let slot_size = 2048;
 
         let dataset = FailingDataset;
-        let mut producer = ZeroTensorProducerBuilder::new(steps, slot_size, shm_name, &socket_path)
+        let mut producer = ZeroTensorProducerBuilder::new(slot_size, shm_name, &socket_path)
             .build()
             .expect("Failed to init producer");
 
