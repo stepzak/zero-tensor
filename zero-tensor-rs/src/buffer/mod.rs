@@ -1,4 +1,5 @@
 pub mod tensor_meta;
+pub mod control_block;
 
 use std::{
     ffi::{self, CString, c_int, c_void},

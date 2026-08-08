@@ -4,6 +4,7 @@ version = "0.2.0"
 edition = "2024"
 
 [dependencies]
+crossbeam-utils = "0.8.22"
 ctrlc = "3.5.2"
 fastrand = "2.5.0"
 libc = "0.2.186"

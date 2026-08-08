@@ -1,4 +1,6 @@
-use crate::dataset::item::TensorDT;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+use crate::dataset::item::{ShapeType, TensorDT};
 
 pub struct TensorDOffsets {
     shapes: usize,
@@ -29,15 +31,22 @@ impl TensorDOffsets {
 }
 
 #[repr(C, align(8))]
-#[derive(Clone, Copy)]
+#[derive(Debug)]
 pub struct TensorHeader {
     dt: TensorDT,
     ndims: u8,
+    pub is_free: AtomicBool
+}
+
+impl Clone for TensorHeader {
+    fn clone(&self) -> Self {
+        Self { dt: self.dt, ndims: self.ndims, is_free: self.is_free.load(Ordering::Relaxed).into() }
+    }
 }
 
 impl TensorHeader {
     pub fn new(dt: TensorDT, ndims: u8) -> Self {
-        TensorHeader { dt, ndims }
+        TensorHeader { dt, ndims, is_free: true.into() }
     }
 
     pub fn dt(&self) -> TensorDT {
@@ -50,7 +59,7 @@ impl TensorHeader {
 
     #[inline]
     fn get_shape_strides_size(ndims: u8) -> usize {
-        size_of::<u32>() * ndims as usize
+        size_of::<ShapeType>() * ndims as usize
     }
 
     pub fn get_offsets(&self) -> TensorDOffsets {
