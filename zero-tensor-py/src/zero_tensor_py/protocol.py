@@ -1,6 +1,13 @@
 import struct
 import torch
+import mmap
+import os
+import socket
+import time
+import gc
+from typing import Generator, Optional
 
+# --- Константы и маппинги ---
 DT_F16: int = 0
 DT_F32: int = 1
 DT_F64: int = 2
@@ -21,42 +28,46 @@ DT_MAP: dict[int, torch.dtype] = {
     DT_I8: torch.int8,
 }
 
+UNSIGNED_FORMATS = {1: 'B', 2: 'H', 4: 'I', 8: 'Q'}
+
+
 class TensorHeaderParser:
     """
     Parser TensorHeader from shared memory
     """
-
-    HEADER_SIZE = 8
-    SHAPE_TYPE_SIZE = 4
-    STRIDES_TYPE_SIZE = 4
+    @staticmethod
+    def is_slot_ready(mmap_obj, slot_offset: int, is_ready_offset_in_header: int) -> bool:
+        val = struct.unpack_from("<B", mmap_obj, slot_offset + is_ready_offset_in_header)[0]
+        return val == 1
 
     @staticmethod
-    def parse_meta(mmap_obj, offset: int) -> tuple[int, int, int, int, int]:
-        """
-        Parses metadata
+    def parse_meta(
+        mmap_obj, 
+        slot_offset: int, 
+        header_size: int, 
+        dt_offset: int, 
+        ndims_offset: int, 
+        shape_type_size: int
+    ) -> tuple[list[int], list[int], torch.dtype, int, int]:
+        dt = struct.unpack_from("<B", mmap_obj, slot_offset + dt_offset)[0]
+        ndims = struct.unpack_from("<B", mmap_obj, slot_offset + ndims_offset)[0]
         
-        :param mmap_obj: pointer to a mmap buffer
-        :type mmap_obj: ReadableBuffer
-        :param offset: Offset to the beginning of the tensor
-        :type offset: int
-        :return: (shape, strides, torch_dt, data_offset, data_size)
-        :rtype: tuple[int, int, int, int, int]
-        """
-        dt, ndims = struct.unpack_from("<BB", mmap_obj, offset)
-
         torch_dt = DT_MAP.get(dt)
-        if not torch_dt:
-            raise ValueError("Unknown dtype in header")
+        if torch_dt is None:
+            raise ValueError(f"Unknown dtype in header: {dt}")
         
         item_size = torch_dt.itemsize
-        shape_offset = offset + TensorHeaderParser.HEADER_SIZE
-        strides_offset = shape_offset + (TensorHeaderParser.SHAPE_TYPE_SIZE * ndims)
-        data_offset = strides_offset + (TensorHeaderParser.STRIDES_TYPE_SIZE * ndims)
-
-        shape = list(struct.unpack_from(f"<{ndims}I", mmap_obj, shape_offset))
-        rust_strides = list(struct.unpack_from(f"<{ndims}I", mmap_obj, strides_offset))
+        shape_offset = slot_offset + header_size
+        strides_offset = shape_offset + (shape_type_size * ndims)
+        data_offset = strides_offset + (shape_type_size * ndims)
+        
+        fmt_char = UNSIGNED_FORMATS.get(shape_type_size, 'I')
+        
+        shape = list(struct.unpack_from(f"<{ndims}{fmt_char}", mmap_obj, shape_offset))
+        rust_strides = list(struct.unpack_from(f"<{ndims}{fmt_char}", mmap_obj, strides_offset))
+        
         strides = [s // item_size for s in rust_strides]
-
+        
         num_elements = 1
         for dim in shape:
             num_elements *= dim

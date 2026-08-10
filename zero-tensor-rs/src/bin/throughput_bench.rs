@@ -11,7 +11,7 @@ const BATCH_SIZE: usize = 32;
 const CHANNELS: ShapeType = 3;
 const HEIGHT: ShapeType = 512;
 const WIDTH: ShapeType = 512;
-const STEPS: usize = 50;
+const STEPS: usize = 200;
 
 struct BenchDataset {
     raw_item_size: usize,
@@ -82,7 +82,8 @@ fn main() {
         slot_size as f64 / 1024.0 / 1024.0
     );
 
-    let mut producer = ZeroTensorProducerBuilder::new(slot_size as usize, shm_name, socket_path)
+    let mut producer = ZeroTensorProducerBuilder::new(slot_size, shm_name, socket_path)
+        .num_slots(3)
         .build()
         .expect("Failed to create producer");
 

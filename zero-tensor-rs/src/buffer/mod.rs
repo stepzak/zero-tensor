@@ -1,16 +1,20 @@
-pub mod tensor_meta;
 pub mod control_block;
+pub mod tensor_meta;
 
 use std::{
     ffi::{self, CString, c_int, c_void},
     ptr,
+    sync::atomic::Ordering,
 };
 use thiserror::Error;
 
 use libc::{mode_t, shm_open};
 
 use crate::{
-    buffer::tensor_meta::TensorHeader,
+    buffer::{
+        control_block::{ZTControlBlockError, ZeroTensorControlBlock},
+        tensor_meta::TensorHeader,
+    },
     dataset::item::{ShapeType, StrideType, TensorDT},
 };
 pub struct ZeroTensorBuffer {
@@ -40,6 +44,9 @@ pub enum ZTBufErr {
 
     #[error("Buffer overflow(total size: {0}, needed: {1}")]
     BufferOverflow(usize, usize),
+
+    #[error("ZeroTensorControlBlock error: {0}")]
+    ZTControlBlockError(#[from] ZTControlBlockError),
 }
 
 #[inline]
@@ -105,28 +112,41 @@ impl ZeroTensorBuffer {
             .map_err(|_| ZTBufErr::InvalidFilename("name contains internal zero byte"))
     }
 
-    pub fn new(name: &str, total_size: usize) -> Result<Self, ZTBufErr> {
+    pub fn new(name: &str, slot_size: u32, nslots: usize) -> Result<Self, ZTBufErr> {
         let oflag = libc::O_CREAT | libc::O_RDWR;
         let mode = 0o666;
-
+        let total_size = slot_size * nslots as u32 + size_of::<ZeroTensorControlBlock>() as u32;
         let cname = ZeroTensorBuffer::get_validated_name(name)?;
 
         let fd = Self::open_shm(&cname, oflag, mode)?;
         let _ = Self::ftrunc(fd, total_size as i64)?;
         let prot = libc::PROT_READ | libc::PROT_WRITE;
         let flags = libc::MAP_SHARED;
-        let addr = Self::mmap(fd, total_size, prot, flags)? as *mut u8;
+        let addr = Self::mmap(fd, total_size as usize, prot, flags)? as *mut u8;
         unsafe {
-            ptr::write_bytes(addr, 0, total_size);
+            ptr::write_bytes(addr, 0, total_size as usize);
+        }
+
+        let cb = ZeroTensorControlBlock::new(nslots, slot_size)?;
+        unsafe {
+            ptr::write(addr as *mut ZeroTensorControlBlock, cb);
         }
 
         Ok(ZeroTensorBuffer {
             addr,
-            total_size,
+            total_size: total_size as usize,
             fd,
             shm_filename: cname,
             is_owner: true,
         })
+    }
+
+    pub fn control_block(&self) -> &ZeroTensorControlBlock {
+        unsafe { &*(self.addr as *const ZeroTensorControlBlock) }
+    }
+
+    pub fn control_block_mut(&mut self) -> &mut ZeroTensorControlBlock {
+        unsafe { &mut *(self.addr as *mut ZeroTensorControlBlock) }
     }
 
     pub fn open(name: &str, total_size: usize) -> Result<Self, ZTBufErr> {
@@ -147,6 +167,13 @@ impl ZeroTensorBuffer {
             fd,
             is_owner: false,
         })
+    }
+
+    pub fn set_slot_ready(&mut self, slot_offset: usize) {
+        let slot_ptr = unsafe { self.addr.add(slot_offset) as *mut TensorHeader };
+        unsafe {
+            (*slot_ptr).is_ready.store(1, Ordering::Release);
+        }
     }
 
     ///Strides must be in bytes!
