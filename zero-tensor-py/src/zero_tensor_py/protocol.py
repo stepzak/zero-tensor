@@ -1,11 +1,5 @@
 import struct
 import torch
-import mmap
-import os
-import socket
-import time
-import gc
-from typing import Generator, Optional
 
 DT_F16: int = 0
 DT_F32: int = 1
