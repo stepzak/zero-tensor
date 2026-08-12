@@ -6,6 +6,7 @@ import socket
 import struct
 import time
 from typing import Generator, Optional
+import atomics
 
 import torch
 from zero_tensor_py.protocol import TensorHeaderParser
@@ -37,6 +38,9 @@ class ZeroTensorConsumer:
         self.ndims_offset = 0
         self.is_ready_offset = 0
         self.shape_type_size = 0
+        self._tail_view = None
+        self._head_view = None
+        self._is_running_view = None
 
     def _parse_handshake(self, handshake_str: str):
         parts = handshake_str.strip().split()
@@ -75,6 +79,7 @@ class ZeroTensorConsumer:
             self._parse_handshake(handshake_bytes.decode('utf-8'))
             
             self.shm_file = open(self.shm_name, "r+b")
+            
             cb_map = mmap.mmap(self.shm_file.fileno(), self.cb_size)
             nslots_offset = self.handshake_dict["nslots_offset"]
             slot_size_offset = self.handshake_dict["slot_size_offset"]
@@ -85,7 +90,9 @@ class ZeroTensorConsumer:
             
             self.total_size = self.cb_size + (self.nslots * self.slot_size)
             self.mem = mmap.mmap(self.shm_file.fileno(), self.total_size)
-            
+            self._tail_view = memoryview(self.mem)[self.tail_offset:self.tail_offset+8]
+            self._head_view = memoryview(self.mem)[self.head_offset:self.head_offset + 8]
+            self._is_running_view = memoryview(self.mem)[self.is_running_offset:self.is_running_offset + 8]
             self.sock.setblocking(False)
             
         except Exception as e:
@@ -95,9 +102,14 @@ class ZeroTensorConsumer:
     def close(self):
         if self.mem is not None and self.is_running_offset > 0:
             try:
-                self.mem[self.is_running_offset:self.is_running_offset + 8] = struct.pack("<Q", 0)
+                self._store_is_running(0)
             except Exception:
                 pass
+
+        for view in (self._tail_view, self._head_view, self._is_running_view):
+            if view is not None:
+                view.release()
+        self._tail_view = self._head_view = self._is_running_view = None
 
         if self.mem is not None:
             try:
@@ -128,6 +140,27 @@ class ZeroTensorConsumer:
     
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
+
+    def _load_head(self) -> int:
+        with atomics.atomicview(buffer=self._head_view, atype=atomics.UINT) as a:
+            return a.load(order=atomics.MemoryOrder.ACQUIRE)
+
+    def _load_is_running(self) -> int:
+        with atomics.atomicview(buffer=self._is_running_view, atype=atomics.UINT) as a:
+            return a.load(order=atomics.MemoryOrder.ACQUIRE)
+        
+    def _load_tail(self) -> int:
+        with atomics.atomicview(buffer = self._tail_view, atype = atomics.UINT) as a:
+            return a.load(order = atomics.MemoryOrder.ACQUIRE)
+    
+
+    def _store_tail(self, tail: int) -> None:
+        with atomics.atomicview(buffer=self._tail_view, atype=atomics.UINT) as a:
+            a.store(tail, order=atomics.MemoryOrder.RELEASE)
+
+    def _store_is_running(self, value: int) -> None:
+        with atomics.atomicview(buffer=self._is_running_view, atype=atomics.UINT) as a:
+            a.store(value, order=atomics.MemoryOrder.RELEASE)
         
     def __iter__(self) -> Generator[torch.Tensor, None, None]:
         if self.sock is None or self.mem is None:
@@ -138,26 +171,26 @@ class ZeroTensorConsumer:
         if self.mem is None:
             raise RuntimeError("Memory not mapped")
             
-        tail = struct.unpack_from("<Q", self.mem, self.tail_offset)[0]
+        tail = self._load_tail()
         
         while True:
-            is_running = struct.unpack_from("<Q", self.mem, self.is_running_offset)[0]
+            is_running = self._load_is_running()
             if is_running == 0:
                 break
-            head = struct.unpack_from("<Q", self.mem, self.head_offset)[0]
+            head = self._load_head()
             while head <= tail:
                 try:
                     readable, _, _ = select.select([self.sock], [], [], _SOCK_WAIT_POLL_TIMEOUT)
                     if readable:
-                        is_running = struct.unpack_from("<Q", self.mem, self.is_running_offset)[0]
+                        is_running = self._load_is_running()
                         if is_running == 0:
                             return
                         chunk = self.sock.recv(1024)
                         if chunk == b"":
-                            raise ConnectionAbortedError("Producer disonnected")
+                            raise ConnectionAbortedError("Producer disconnected")
                         if _CONTROL_NEXT_EPOCH_MSG in chunk:
                             return
-                    head = struct.unpack_from("<Q", self.mem, self.head_offset)[0]
+                    head = self._load_head()
                 except BlockingIOError:
                     pass
                 continue
@@ -180,4 +213,4 @@ class ZeroTensorConsumer:
                 yield batch_tensor
             finally:    
                 tail += 1
-                struct.Struct("<Q").pack_into(self.mem, self.tail_offset, tail)
+                self._store_tail(tail)
