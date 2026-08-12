@@ -45,6 +45,7 @@ class MockAsyncProducer:
         self.server_sock.listen(1)
         self.thread = None
         self.exc = None
+        self.conn = None
 
     def _build_handshake(self) -> str:
         return (
@@ -75,6 +76,7 @@ class MockAsyncProducer:
             self.server_sock.settimeout(5.0)
             try:
                 conn, _ = self.server_sock.accept()
+                self.conn = conn
             except socket.timeout:
                 return
             try:
@@ -165,7 +167,7 @@ class MockAsyncProducer:
 
     def stop(self):
         if self.thread:
-            self.thread.join(timeout=7.0)
+            self.thread.join(timeout=3.0)
             if self.thread.is_alive():
                 raise RuntimeError(
                     f"MockAsyncProducer thread did not terminate within timeout "
@@ -329,6 +331,7 @@ def test_consumer_ring_buffer_wrap_around(temp_ipc_env):
     finally:
         server.stop()
 
+
 def test_consumer_detects_producer_death(temp_ipc_env):
     socket_path, shm_name, shm_path = temp_ipc_env
     server = MockAsyncProducer(socket_path, shm_path, nslots=2, slot_size=1024)
@@ -337,7 +340,9 @@ def test_consumer_detects_producer_death(temp_ipc_env):
     with ZeroTensorConsumer(socket_path, shm_name) as consumer:
         it = iter(consumer)
         next(it)
-        server.server_sock.close()
+        while server.conn is None:
+            time.sleep(0.001)
+        server.conn.close()
         with pytest.raises(ConnectionAbortedError):
             for _ in it:
                 pass
