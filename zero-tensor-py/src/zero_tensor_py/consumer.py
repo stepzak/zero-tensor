@@ -149,6 +149,9 @@ class ZeroTensorConsumer:
                 try:
                     readable, _, _ = select.select([self.sock], [], [], _SOCK_WAIT_POLL_TIMEOUT)
                     if readable:
+                        is_running = struct.unpack_from("<Q", self.mem, self.is_running_offset)[0]
+                        if is_running == 0:
+                            return
                         chunk = self.sock.recv(1024)
                         if chunk == b"":
                             raise ConnectionAbortedError("Producer disonnected")
