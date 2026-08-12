@@ -12,7 +12,7 @@ const CHANNELS: ShapeType = 3;
 const HEIGHT: ShapeType = 512;
 const WIDTH: ShapeType = 512;
 const STEPS: usize = 400;
-const NSLOTS: usize = 24;
+const NSLOTS: usize = 32;
 
 struct BenchDataset {
     raw_item_size: usize,

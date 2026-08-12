@@ -328,3 +328,16 @@ def test_consumer_ring_buffer_wrap_around(temp_ipc_env):
             assert torch.allclose(batch, expected), f"Mismatch at batch {j}"
     finally:
         server.stop()
+
+def test_consumer_detects_producer_death(temp_ipc_env):
+    socket_path, shm_name, shm_path = temp_ipc_env
+    server = MockAsyncProducer(socket_path, shm_path, nslots=2, slot_size=1024)
+    server.start([_make_batch([2, 2], [1.0, 2.0, 3.0, 4.0])] * 5)
+
+    with ZeroTensorConsumer(socket_path, shm_name) as consumer:
+        it = iter(consumer)
+        next(it)
+        server.server_sock.close()
+        with pytest.raises(ConnectionAbortedError):
+            for _ in it:
+                pass

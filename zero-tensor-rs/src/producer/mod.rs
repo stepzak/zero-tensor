@@ -365,7 +365,9 @@ impl ZeroTensorProducer {
                 if self.shuffle {
                     self.reshuffle_indices(&mut indices, current_epoch);
                 }
-                Self::send_cmd(stream, ZTProducerCmd::EpochEnd)?;
+                if current_epoch != 1 {
+                    Self::send_cmd(stream, ZTProducerCmd::EpochEnd)?;
+                }
             }
 
             let start_idx = batch_size * epoch_step;
