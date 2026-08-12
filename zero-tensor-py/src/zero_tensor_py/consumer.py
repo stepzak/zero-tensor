@@ -1,6 +1,7 @@
 import gc
 import mmap
 import os
+import select
 import socket
 import struct
 import time
@@ -10,6 +11,10 @@ import torch
 from zero_tensor_py.protocol import TensorHeaderParser
 
 VERSION = "0.5.0"
+_CONTROL_START_MSG = b"START\n"
+_CONTROL_STOP_MSG = b"STOP\n"
+_CONTROL_NEXT_EPOCH_MSG = b"EPOCH_DONE\n"
+_SOCK_WAIT_POLL_TIMEOUT = 0.00001
 
 class ZeroTensorConsumer:
     def __init__(self, socket_path: str, shm_name: str):
@@ -59,7 +64,7 @@ class ZeroTensorConsumer:
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         try:
             self.sock.connect(self.socket_path)
-            self.sock.sendall(b"START\n")
+            self.sock.sendall(_CONTROL_START_MSG)
             
             handshake_bytes = b""
             while b"\n" not in handshake_bytes:
@@ -111,7 +116,7 @@ class ZeroTensorConsumer:
 
         if self.sock is not None:
             try:
-                self.sock.sendall(b"STOP\n")
+                self.sock.sendall(_CONTROL_STOP_MSG)
             except (BrokenPipeError, OSError):
                 pass 
             self.sock.close()
@@ -140,21 +145,25 @@ class ZeroTensorConsumer:
             if is_running == 0:
                 break
             head = struct.unpack_from("<Q", self.mem, self.head_offset)[0]
-            if head <= tail:
+            while head <= tail:
                 try:
-                    chunk = self.sock.recv(1024)
-                    if chunk and b"EPOCH_DONE" in chunk:
-                        break
+                    readable, _, _ = select.select([self.sock], [], [], _SOCK_WAIT_POLL_TIMEOUT)
+                    if readable:
+                        chunk = self.sock.recv(1024)
+                        if chunk == b"":
+                            raise ConnectionAbortedError("Producer disonnected")
+                        if _CONTROL_NEXT_EPOCH_MSG in chunk:
+                            return
+                    head = struct.unpack_from("<Q", self.mem, self.head_offset)[0]
                 except BlockingIOError:
                     pass
-                time.sleep(0.00001)
                 continue
                 
             slot_idx = tail % self.nslots
             slot_offset = self.cb_size + (slot_idx * self.slot_size)
             
             if not TensorHeaderParser.is_slot_ready(self.mem, slot_offset, self.is_ready_offset):
-                time.sleep(0.00001)
+                time.sleep(_SOCK_WAIT_POLL_TIMEOUT)
                 continue
                 
             shape, strides, dt, data_offset, data_size = TensorHeaderParser.parse_meta(
