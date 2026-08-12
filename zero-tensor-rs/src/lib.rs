@@ -7,72 +7,14 @@ mod tests {
     use std::io::{Read, Write};
     use std::os::unix::net::UnixStream;
     use std::path::PathBuf;
-    use std::sync::atomic::Ordering;
     use std::thread;
     use std::time::Duration;
     use tempfile::tempdir;
 
-    use crate::buffer::control_block::ZeroTensorControlBlock;
-    use crate::buffer::tensor_meta::TensorHeader;
     use crate::buffer::{ZTBufErr, ZeroTensorBuffer};
     use crate::dataset::ZeroTensorDataset;
-    use crate::dataset::item::{ShapeType, StrideType, TensorBatchLayout, TensorDT};
+    use crate::dataset::item::{TensorBatchLayout, TensorDT};
     use crate::producer::ZeroTensorProducerBuilder;
-
-    struct MockDataset {
-        len: usize,
-        meta: TensorBatchLayout,
-    }
-
-    impl MockDataset {
-        fn new(len: usize) -> Self {
-            let shape = vec![2, 3];
-            let strides = vec![3, 1];
-            let dt = TensorDT::F32;
-            let meta = TensorBatchLayout::new(shape.into(), strides.into(), dt);
-
-            Self { len, meta }
-        }
-    }
-
-    impl ZeroTensorDataset for MockDataset {
-        type Error = std::io::Error;
-
-        fn len(&self) -> usize {
-            self.len
-        }
-
-        fn is_empty(&self) -> bool {
-            self.len == 0
-        }
-
-        fn get_batch_layout(&self, _idxs: &[usize]) -> Result<TensorBatchLayout, Self::Error> {
-            Ok(self.meta.clone())
-        }
-
-        fn write_item_into(&self, idx: usize, buf: &mut [u8]) -> Result<(), Self::Error> {
-            if idx >= self.len {
-                return Err(std::io::ErrorKind::InvalidData.into());
-            }
-            let meta = self.get_batch_layout(&[idx])?;
-            let total_elements = meta.total_elements();
-
-            match meta.dt() {
-                TensorDT::F32 => {
-                    let f32_slice = unsafe {
-                        std::slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut f32, total_elements)
-                    };
-                    for i in 0..total_elements {
-                        f32_slice[i] = i as f32 * 0.5 + idx as f32;
-                    }
-                }
-                _ => {
-                    buf.fill(0);
-                }
-            }
-            Ok(())
-        }
-    }
 
     struct FailingDataset;
 

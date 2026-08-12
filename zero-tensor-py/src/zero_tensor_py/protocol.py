@@ -7,7 +7,6 @@ import time
 import gc
 from typing import Generator, Optional
 
-# --- Константы и маппинги ---
 DT_F16: int = 0
 DT_F32: int = 1
 DT_F64: int = 2

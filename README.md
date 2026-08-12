@@ -6,14 +6,12 @@
 
 ## Performance Benchmark (Total: 4800 MB Transferred)
 
-*Environment: Synthetic dataset (3x512x512 F32 images), Batch Size 32, 50 Steps.*
+*Environment: Synthetic dataset (3x512x512 F32 images), Batch Size 32, 300 Steps.*
 
 | Metric | Standard PyTorch DataLoader | ZeroTensor IPC Loader | Improvement |
 | :--- | :---: | :---: | :---: |
-| **Throughput** | ~3.52 GB/s | **7.33+ GB/s** | **>2.0x Faster** |
-| **Execution Time** | 1.33 s | **0.64 s** | **~52% Time Reduction** |
+| **Throughput** | ~4.7 GB/s | **8+ GB/s** | **~1.7x Faster** |
 | **Page Faults** | Linear growth per batch | **O(1) (Startup only)** | **Eliminated runtime paging** |
-| **Sys/CPU time** | 5.06s/13.27s (~38%) | 0.17s/2.2s(~8.5%) | **User-space dominant** |
 
 > **Note:** The benchmark includes realistic CPU load (`copy_from_slice` + arithmetic) in the Rust producer to simulate real-world decoding/preprocessing. ZeroTensor maintains its lead even under heavy computational load due to its zero-copy architecture.
 
@@ -90,10 +88,8 @@ impl ZeroTensorDataset for MyDataset {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let dataset = MyDataset {};
     let slot_size = 32 * 1024 * 1024; // 32 MB per slot
-    let steps = 100;
 
     let mut producer = ZeroTensorProducerBuilder::new(
-        steps,
         slot_size,
         "zt_shared_buffer",
         Path::new("/tmp/zt.sock"),
@@ -125,17 +121,17 @@ slot_size = 32 * 1024 * 1024  # Must match producer slot size
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Multi-epoch training loop
-for epoch in range(5):
-    with ZeroTensorConsumer(
-        socket_path, shm_name, slot_size, nslots=3
+with ZeroTensorConsumer(
+        socket_path, shm_name
     ) as consumer:
-        for batch in consumer:
-            inputs = batch.to(device, non_blocking=True)
+    for epoch in range(5):
+            for batch in consumer:
+                inputs = batch.to(device, non_blocking=True)
 
-            outputs = model(inputs)
-            loss = criterion(outputs, targets)
-            loss.backward()
-            optimizer.step()
+                outputs = model(inputs)
+                loss = criterion(outputs, targets)
+                loss.backward()
+                optimizer.step()
 ```
 ## System Profile Deep Dive
 The telemetry captured via ``perf stat`` highlights why ZeroTensor outperforms traditional approaches:
@@ -158,6 +154,6 @@ We are actively working on scaling `ZeroTensor` to support more complex deep lea
 
 [x] **Builder Pattern & Multi-Epoch Shuffling**: Integrated flexible producer initialization with configurable shuffling seeds.
 
-[ ] **Native Multi-Epoch Control Loop**: Support continuous connection handling across epochs via explicit EPOCH_DONE signaling.
+[x] **Native Multi-Epoch Control Loop**: Support continuous connection handling across epochs via explicit EPOCH_DONE signaling.
 
 [x] **Dynamic Tensor Shapes Support**: Implement elastic memory partitioning inside SHM slots for variable sequence length workloads (e.g., LLM tokenization, audio processing).

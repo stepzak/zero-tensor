@@ -9,7 +9,7 @@ def main():
     batch_size = int(sys.argv[4])
 
     print(f"[PyConsumer] Connecting to {socket_path}...")
-    with ZeroTensorConsumer(socket_path, shm_name, slot_size, nslots=3) as consumer:
+    with ZeroTensorConsumer(socket_path, shm_name) as consumer:
         for epoch in range(3):
             step = 0
             for batch in consumer:

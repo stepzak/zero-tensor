@@ -4,18 +4,18 @@ import torch
 
 ELEMENT_SHAPE = (3, 512, 512) 
 BATCH_SIZE = 32
-PYTORCH_STEPS = 200 
+PYTORCH_STEPS = 300 
+NWORKERS = 4
 
 
 class DummyDataset(torch.utils.data.Dataset):
-    def __init__(self):
-        self.data = torch.randn(ELEMENT_SHAPE, dtype=torch.float32)
-        self.data.fill_(1.0)
     def __len__(self):
         return PYTORCH_STEPS * BATCH_SIZE 
-    def __getitem__(self, idx):
-        val = float(idx % 255)
-        return self.data.clone().fill_(val)
+    def __getitems__(self, indices):
+        batch = torch.empty((len(indices), *ELEMENT_SHAPE), dtype=torch.float32)
+        for i, idx in enumerate(indices):
+            batch[i].fill_(float(idx % 255))
+        return batch
 
 def benchmark_standard_loader():
     dataset = DummyDataset()
@@ -23,8 +23,11 @@ def benchmark_standard_loader():
     loader = torch.utils.data.DataLoader(
         dataset, 
         batch_size=BATCH_SIZE, 
-        num_workers=0, 
+        num_workers=NWORKERS, 
+        persistent_workers=True,
+        pin_memory=True,
         drop_last=True,
+        collate_fn=lambda batch: batch,
     ) 
     
     print("[Bench] Starting Standard PyTorch DataLoader (Safe Mode)...")

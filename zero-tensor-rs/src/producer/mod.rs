@@ -224,31 +224,26 @@ impl ZeroTensorProducer {
         buf: &mut String,
     ) -> Result<ZTConsumerCmd, io::Error> {
         buf.clear();
-        
+
         if !self.running.load(Ordering::SeqCst) {
             return Err(io::Error::from(io::ErrorKind::Interrupted));
         }
 
         match reader.read_line(buf) {
-            Ok(0) => {
-                Ok(ZTConsumerCmd::Stop)
-            }
+            Ok(0) => Ok(ZTConsumerCmd::Stop),
             Ok(_) => match buf.trim() {
                 CONSUMER_STOP => Ok(ZTConsumerCmd::Stop),
                 CONSUMER_START => Ok(ZTConsumerCmd::Start),
-                _ => {
-                    Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        format!(
-                            "Unexpected protocol violation from consumer: '{}'",
-                            buf.trim()
-                        ),
-                    ))
-                }
+                _ => Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "Unexpected protocol violation from consumer: '{}'",
+                        buf.trim()
+                    ),
+                )),
             },
             Err(e)
-                if e.kind() == io::ErrorKind::WouldBlock
-                    || e.kind() == io::ErrorKind::TimedOut =>
+                if e.kind() == io::ErrorKind::WouldBlock || e.kind() == io::ErrorKind::TimedOut =>
             {
                 Err(io::ErrorKind::WouldBlock.into())
             }
@@ -359,9 +354,10 @@ impl ZeroTensorProducer {
             }
 
             if let Some(max) = self.max_steps
-                && epoch_step + current_epoch * steps_per_epoch >= max {
-                    return Ok(());
-                }
+                && epoch_step + current_epoch * steps_per_epoch >= max
+            {
+                return Ok(());
+            }
 
             if epoch_step >= steps_per_epoch {
                 current_epoch += 1;

@@ -6,7 +6,7 @@ from zero_tensor_py import ZeroTensorConsumer
 
 ELEMENT_SHAPE = (3, 512, 512) 
 BATCH_SIZE = 32
-PYTORCH_STEPS = 200 
+PYTORCH_STEPS = 300 
 
 
 class DummyDataset(torch.utils.data.Dataset):
@@ -59,7 +59,7 @@ def benchmark_zero_tensor():
     start_time = time.perf_counter()
     total_bytes = 0
     
-    with ZeroTensorConsumer(socket_path, shm_name, slot_size, nslots=2) as consumer:
+    with ZeroTensorConsumer(socket_path, shm_name) as consumer:
         for batch in consumer:
             total_bytes += batch.nbytes
             _ = batch[0, 0, 0, 0].item()

@@ -9,13 +9,14 @@ from typing import Generator, Optional
 import torch
 from zero_tensor_py.protocol import TensorHeaderParser
 
+VERSION = "0.5.0"
 
 class ZeroTensorConsumer:
-    def __init__(self, socket_path: str, shm_name: str, slot_size: int, nslots: int = 2):
+    def __init__(self, socket_path: str, shm_name: str):
         self.socket_path = socket_path
         self.shm_name = os.path.join("/dev/shm", shm_name)
-        self.slot_size = slot_size
-        self.nslots = nslots
+        self.slot_size = None
+        self.nslots = None
 
         self.sock: Optional[socket.socket] = None
         self.shm_file = None
@@ -36,8 +37,9 @@ class ZeroTensorConsumer:
         parts = handshake_str.strip().split()
         if not parts or parts[0] != "ZT":
             raise ValueError(f"Invalid handshake protocol: {handshake_str}")
-        
-        for part in parts[1:]:
+        if parts[1] != VERSION:
+            raise RuntimeError(f"Invalid protocol version, consumer is {VERSION}, producer is {parts[1]}")
+        for part in parts[2:]:
             if "=" in part:
                 key, val = part.split("=", 1)
                 self.handshake_dict[key] = int(val)
@@ -69,7 +71,6 @@ class ZeroTensorConsumer:
             
             self.shm_file = open(self.shm_name, "r+b")
             cb_map = mmap.mmap(self.shm_file.fileno(), self.cb_size)
-            
             nslots_offset = self.handshake_dict["nslots_offset"]
             slot_size_offset = self.handshake_dict["slot_size_offset"]
             
@@ -80,7 +81,6 @@ class ZeroTensorConsumer:
             self.total_size = self.cb_size + (self.nslots * self.slot_size)
             self.mem = mmap.mmap(self.shm_file.fileno(), self.total_size)
             
-            # Делаем сокет неблокирующим, чтобы проверять EPOCH_DONE без блокировки SHM-цикла
             self.sock.setblocking(False)
             
         except Exception as e:
@@ -88,15 +88,12 @@ class ZeroTensorConsumer:
             raise ConnectionError(f"Failed to connect and initialize: {e}")
 
     def close(self):
-        # 1. Сигнализируем Producer'у об остановке через атомик в SHM
         if self.mem is not None and self.is_running_offset > 0:
             try:
-                # Записываем 0 в is_running (AtomicU64, формат <Q)
                 self.mem[self.is_running_offset:self.is_running_offset + 8] = struct.pack("<Q", 0)
             except Exception:
                 pass
 
-        # 2. Закрываем mmap
         if self.mem is not None:
             try:
                 self.mem.close()
@@ -112,7 +109,6 @@ class ZeroTensorConsumer:
             self.shm_file.close()
             self.shm_file = None
 
-        # 3. Закрываем сокет
         if self.sock is not None:
             try:
                 self.sock.sendall(b"STOP\n")
@@ -137,41 +133,30 @@ class ZeroTensorConsumer:
         if self.mem is None:
             raise RuntimeError("Memory not mapped")
             
-        # Инициализируем локальный счетчик tail
         tail = struct.unpack_from("<Q", self.mem, self.tail_offset)[0]
         
         while True:
-            # 1. Проверяем, не попросил ли Producer остановиться (или мы сами)
             is_running = struct.unpack_from("<Q", self.mem, self.is_running_offset)[0]
             if is_running == 0:
                 break
-                
-            # 2. Проверяем сокет на наличие EPOCH_DONE (неблокирующе)
-            try:
-                chunk = self.sock.recv(1024)
-                if chunk and b"EPOCH_DONE" in chunk:
-                    # Эпоха закончилась, прерываем итератор. 
-                    # Следующий вызов __iter__ продолжит чтение с текущего tail.
-                    break
-            except BlockingIOError:
-                pass # Нет данных в сокете, это нормальное состояние
-            
             head = struct.unpack_from("<Q", self.mem, self.head_offset)[0]
-            
             if head <= tail:
-                time.sleep(0.0001) 
+                try:
+                    chunk = self.sock.recv(1024)
+                    if chunk and b"EPOCH_DONE" in chunk:
+                        break
+                except BlockingIOError:
+                    pass
+                time.sleep(0.00001)
                 continue
                 
-            # 5. Вычисляем индекс слота и его смещение
             slot_idx = tail % self.nslots
             slot_offset = self.cb_size + (slot_idx * self.slot_size)
             
-            # 6. Проверяем, готов ли именно этот слот (Producer мог захватить head, но еще не записать данные)
             if not TensorHeaderParser.is_slot_ready(self.mem, slot_offset, self.is_ready_offset):
-                time.sleep(0.00001) # 10 микросекунд
+                time.sleep(0.00001)
                 continue
                 
-            # 7. Данные готовы! Парсим метаданные и создаем тензор (Zero-Copy)
             shape, strides, dt, data_offset, data_size = TensorHeaderParser.parse_meta(
                 self.mem, slot_offset, self.header_size, self.dt_offset, self.ndims_offset, self.shape_type_size
             )
@@ -179,9 +164,8 @@ class ZeroTensorConsumer:
             raw_view = memoryview(self.mem)[data_offset:data_offset + data_size]
             flat_tensor = torch.frombuffer(raw_view, dtype=dt)
             batch_tensor = torch.as_strided(flat_tensor, shape, strides)
-            
-            yield batch_tensor
-            
-            # 8. Освобождаем слот, инкрементируя tail в SHM
-            tail += 1
-            self.mem[self.tail_offset:self.tail_offset + 8] = struct.pack("<Q", tail)
+            try:
+                yield batch_tensor
+            finally:    
+                tail += 1
+                struct.Struct("<Q").pack_into(self.mem, self.tail_offset, tail)

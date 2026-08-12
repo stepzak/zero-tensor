@@ -9,7 +9,6 @@ def benchmark_zero_tensor():
     
     socket_path = "/tmp/zt_bench.sock"
     shm_name = "zt_bench"
-    slot_size = (32 * 3 * 512 * 512 * 4) + 4096 
     
     if not os.path.exists(socket_path):
         print("Skip: Rust producer is not running. Run the rust bench companion first!")
@@ -18,7 +17,7 @@ def benchmark_zero_tensor():
     start_time = time.perf_counter()
     total_bytes = 0
     
-    with ZeroTensorConsumer(socket_path, shm_name, slot_size, nslots=2) as consumer:
+    with ZeroTensorConsumer(socket_path, shm_name) as consumer:
         for batch in consumer:
             total_bytes += batch.nbytes
             _ = batch[0, 0, 0, 0].item()
