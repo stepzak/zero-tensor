@@ -100,7 +100,7 @@ fn test_dynamic_batching_e2e() {
     let max_item_bytes = (5 * 5 * get_dt_size(TensorDT::F32)) as usize;
     let slot_size = (max_item_bytes * batch_size) + 4096;
 
-    let mut producer = ZeroTensorProducerBuilder::new(slot_size, shm_name, &socket_path)
+    let mut producer = ZeroTensorProducerBuilder::new(slot_size as u32, shm_name, &socket_path)
         .num_slots(3)
         .build()
         .expect("Failed to init producer");
