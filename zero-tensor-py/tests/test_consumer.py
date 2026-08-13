@@ -7,7 +7,7 @@ import time
 import pytest
 import torch
 from zero_tensor_py.protocol import DT_F32, DT_F16, DT_I32, DT_I64
-from zero_tensor_py.consumer import ZeroTensorConsumer
+from zero_tensor_py.consumer import ZeroTensorConsumer, VERSION
 
 
 CB_HEAD_OFFSET = 0
@@ -32,11 +32,12 @@ SHAPE_TYPE_SIZE = 4
 
 
 class MockAsyncProducer:
-    def __init__(self, socket_path: str, shm_path: str, nslots: int, slot_size: int):
+    def __init__(self, socket_path: str, shm_path: str, nslots: int, slot_size: int, wrong_vers = False):
         self.socket_path = socket_path
         self.shm_path = shm_path
         self.nslots = nslots
         self.slot_size = slot_size
+        self.ver = VERSION if not wrong_vers else "0"
         
         self.server_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         if os.path.exists(socket_path):
@@ -49,7 +50,7 @@ class MockAsyncProducer:
 
     def _build_handshake(self) -> str:
         return (
-            f"ZT 0.5.0 "
+            f"ZT {self.ver} "
             f"cb_size={CB_SIZE} "
             f"head_offset={CB_HEAD_OFFSET} head_size={CB_HEAD_SIZE} "
             f"tail_offset={CB_TAIL_OFFSET} tail_size={CB_TAIL_SIZE} "
@@ -346,3 +347,12 @@ def test_consumer_detects_producer_death(temp_ipc_env):
         with pytest.raises(ConnectionAbortedError):
             for _ in it:
                 pass
+
+def test_wrong_ver(temp_ipc_env):
+    sock_path, shm_name, shm_path = temp_ipc_env
+    server = MockAsyncProducer(sock_path, shm_path, nslots = 2, slot_size = 1024, wrong_vers = True)
+    server.start([])
+
+    with pytest.raises(ConnectionError):
+        with ZeroTensorConsumer(sock_path, shm_name) as _:
+            assert False, "Should fail with wrong ver"
