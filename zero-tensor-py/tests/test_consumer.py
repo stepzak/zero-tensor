@@ -7,7 +7,8 @@ import time
 import pytest
 import torch
 from zero_tensor_py.protocol import DT_F32, DT_F16, DT_I32, DT_I64
-from zero_tensor_py.consumer import ZeroTensorConsumer, VERSION
+from zero_tensor_py.consumer import ZeroTensorConsumer, VERSION, _PROTO_BEGIN_STR
+import zero_tensor_py.exceptions as exc
 
 
 CB_HEAD_OFFSET = 0
@@ -32,12 +33,22 @@ SHAPE_TYPE_SIZE = 4
 
 
 class MockAsyncProducer:
-    def __init__(self, socket_path: str, shm_path: str, nslots: int, slot_size: int, wrong_vers = False):
+    def __init__(self, 
+                 socket_path: str, 
+                 shm_path: str, 
+                 nslots: int, 
+                 slot_size: int, 
+                 wrong_vers = False, 
+                 wrong_proto = False,
+                 missing_proto = False,
+                 invalid_proto_val = False):
         self.socket_path = socket_path
         self.shm_path = shm_path
         self.nslots = nslots
         self.slot_size = slot_size
         self.ver = VERSION if not wrong_vers else "0"
+        self.missing_proto = missing_proto
+        self.invalid_proto_val = invalid_proto_val
         
         self.server_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         if os.path.exists(socket_path):
@@ -47,11 +58,16 @@ class MockAsyncProducer:
         self.thread = None
         self.exc = None
         self.conn = None
+        self.proto = _PROTO_BEGIN_STR if not wrong_proto else "PROTOXD"
 
     def _build_handshake(self) -> str:
+        cb_key = "cb_size" if not self.missing_proto else ""
+        cb_key+= (f"={CB_SIZE}" if not self.invalid_proto_val and not self.missing_proto else "")
+        if self.invalid_proto_val and not self.missing_proto:
+            cb_key+="=f"
         return (
-            f"ZT {self.ver} "
-            f"cb_size={CB_SIZE} "
+            f"{self.proto} {self.ver} "
+            f"{cb_key} "
             f"head_offset={CB_HEAD_OFFSET} head_size={CB_HEAD_SIZE} "
             f"tail_offset={CB_TAIL_OFFSET} tail_size={CB_TAIL_SIZE} "
             f"nslots_offset={CB_NSLOTS_OFFSET} nslots_size={CB_NSLOTS_SIZE} "
@@ -199,7 +215,7 @@ def temp_ipc_env(tmp_path):
 
 
 def _make_batch(shape: list[int], values: list[float], dt: int = DT_F32) -> dict:
-    item_size = {DT_F32: 4, DT_F16: 2, DT_I32: 4, DT_I64: 8}[dt]
+    item_size = {DT_F32: 4, DT_F16: 2, DT_I32: 4, DT_I64: 8}.get(dt, 4)
     
     strides_bytes = []
     stride = item_size
@@ -212,8 +228,7 @@ def _make_batch(shape: list[int], values: list[float], dt: int = DT_F32) -> dict
     elif dt == DT_I32:
         data = struct.pack(f"<{len(values)}i", *values)
     else:
-        raise ValueError(f"Unsupported dt: {dt}")
-    
+        data = struct.pack(f"<{len(values)}i", *([8]*len(values)))
     return {
         "shape": shape,
         "strides_bytes": strides_bytes,
@@ -344,15 +359,33 @@ def test_consumer_detects_producer_death(temp_ipc_env):
         while server.conn is None:
             time.sleep(0.001)
         server.conn.close()
-        with pytest.raises(ConnectionAbortedError):
+        with pytest.raises(exc.ZTConnectionError):
             for _ in it:
                 pass
 
-def test_wrong_ver(temp_ipc_env):
+@pytest.mark.parametrize(
+        "fail_kwarg,r_exc",
+        (
+            ["wrong_vers", exc.ProtocolError],
+            ["wrong_proto", exc.ProtocolError],
+            ["missing_proto", exc.ProtocolError],
+            ["invalid_proto_val", exc.MalformedMessageError]
+        )
+)
+def test_invalid_handshake(temp_ipc_env, fail_kwarg, r_exc):
     sock_path, shm_name, shm_path = temp_ipc_env
-    server = MockAsyncProducer(sock_path, shm_path, nslots = 2, slot_size = 1024, wrong_vers = True)
+    server = MockAsyncProducer(sock_path, shm_path, nslots = 2, slot_size = 1024, **{fail_kwarg: True})
     server.start([])
 
-    with pytest.raises(ConnectionError):
+    with pytest.raises(r_exc):
         with ZeroTensorConsumer(sock_path, shm_name) as _:
-            assert False, "Should fail with wrong ver"
+            assert False, "Should fail"
+
+def test_wrong_dt(temp_ipc_env):
+    sock_path, shm_name, shm_path = temp_ipc_env
+    server = MockAsyncProducer(sock_path, shm_path, nslots = 2, slot_size = 1024)
+    server.start([_make_batch([2, 2], [1.0, 2.0, 3.0, 4.0], dt = 32)] * 3)
+    with ZeroTensorConsumer(sock_path, shm_name) as cons:
+        it = iter(cons)
+        with pytest.raises(exc.MalformedMessageError):
+            next(it)

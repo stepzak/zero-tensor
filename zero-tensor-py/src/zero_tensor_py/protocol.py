@@ -1,5 +1,6 @@
 import struct
 import torch
+import zero_tensor_py.exceptions as exc
 
 DT_F16: int = 0
 DT_F32: int = 1
@@ -47,7 +48,7 @@ class TensorHeaderParser:
         
         torch_dt = DT_MAP.get(dt)
         if torch_dt is None:
-            raise ValueError(f"Unknown dtype in header: {dt}")
+            raise exc.MalformedMessageError(f"Unknown dtype in header: {dt}")
         
         item_size = torch_dt.itemsize
         shape_offset = slot_offset + header_size

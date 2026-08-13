@@ -10,12 +10,14 @@ import atomics
 
 import torch
 from zero_tensor_py.protocol import TensorHeaderParser
+import zero_tensor_py.exceptions as zt_exc
 
 VERSION = "0.5.0"
 _CONTROL_START_MSG = b"START\n"
 _CONTROL_STOP_MSG = b"STOP\n"
 _CONTROL_NEXT_EPOCH_MSG = b"EPOCH_DONE\n"
 _SOCK_WAIT_POLL_TIMEOUT = 0.00001
+_PROTO_BEGIN_STR = "ZT"
 
 class ZeroTensorConsumer:
     def __init__(self, socket_path: str, shm_name: str):
@@ -44,25 +46,31 @@ class ZeroTensorConsumer:
 
     def _parse_handshake(self, handshake_str: str):
         parts = handshake_str.strip().split()
-        if not parts or parts[0] != "ZT":
-            raise ValueError(f"Invalid handshake protocol: {handshake_str}")
+        if not parts or parts[0] != _PROTO_BEGIN_STR:
+            raise zt_exc.ProtocolError(f"Invalid handshake protocol: {handshake_str}")
         if parts[1] != VERSION:
-            raise RuntimeError(f"Invalid protocol version, consumer is {VERSION}, producer is {parts[1]}")
+            raise zt_exc.ProtocolError(f"Invalid protocol version, consumer is {VERSION}, producer is {parts[1]}")
         for part in parts[2:]:
             if "=" in part:
                 key, val = part.split("=", 1)
-                self.handshake_dict[key] = int(val)
-        
-        self.cb_size = self.handshake_dict["cb_size"]
-        self.head_offset = self.handshake_dict["head_offset"]
-        self.tail_offset = self.handshake_dict["tail_offset"]
-        self.is_running_offset = self.handshake_dict["is_running_offset"]
-        
-        self.header_size = self.handshake_dict["header_size"]
-        self.dt_offset = self.handshake_dict["dt_offset"]
-        self.ndims_offset = self.handshake_dict["ndims_offset"]
-        self.is_ready_offset = self.handshake_dict["is_ready_offset"]
-        self.shape_type_size = self.handshake_dict["shape_type_size"]
+                try:
+                    self.handshake_dict[key] = int(val)
+                except ValueError:
+                    raise zt_exc.MalformedMessageError(f"{key} did not have a valid value: {val}. Full str: {handshake_str}")
+        try:
+            self.cb_size = self.handshake_dict["cb_size"]
+            self.head_offset = self.handshake_dict["head_offset"]
+            self.tail_offset = self.handshake_dict["tail_offset"]
+            self.is_running_offset = self.handshake_dict["is_running_offset"]
+            
+            self.header_size = self.handshake_dict["header_size"]
+            self.dt_offset = self.handshake_dict["dt_offset"]
+            self.ndims_offset = self.handshake_dict["ndims_offset"]
+            self.is_ready_offset = self.handshake_dict["is_ready_offset"]
+            self.shape_type_size = self.handshake_dict["shape_type_size"]
+        except KeyError as e:
+            missing = e.args[0]
+            raise zt_exc.ProtocolError(f"Invalid handshake protocol, {missing} is missing. Full str: {handshake_str}")
 
     def connect(self):
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -74,7 +82,7 @@ class ZeroTensorConsumer:
             while b"\n" not in handshake_bytes:
                 chunk = self.sock.recv(4096)
                 if not chunk:
-                    raise ConnectionError("Producer closed connection during handshake")
+                    raise zt_exc.ZTConnectionError("Producer closed connection during handshake")
                 handshake_bytes += chunk
             self._parse_handshake(handshake_bytes.decode('utf-8'))
             
@@ -97,7 +105,7 @@ class ZeroTensorConsumer:
             
         except Exception as e:
             self.close()
-            raise ConnectionError(f"Failed to connect and initialize: {e}")
+            raise e
 
     def close(self):
         if self.mem is not None and self.is_running_offset > 0:
@@ -187,7 +195,7 @@ class ZeroTensorConsumer:
                             return
                         chunk = self.sock.recv(1024)
                         if chunk == b"":
-                            raise ConnectionAbortedError("Producer disconnected")
+                            raise zt_exc.ZTConnectionError("Producer disconnected")
                         if _CONTROL_NEXT_EPOCH_MSG in chunk:
                             return
                     head = self._load_head()

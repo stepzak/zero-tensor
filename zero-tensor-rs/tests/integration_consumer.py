@@ -5,7 +5,6 @@ from zero_tensor_py import ZeroTensorConsumer
 def main():
     socket_path = sys.argv[1]
     shm_name = sys.argv[2]
-    slot_size = int(sys.argv[3])
     batch_size = int(sys.argv[4])
 
     print(f"[PyConsumer] Connecting to {socket_path}...")
