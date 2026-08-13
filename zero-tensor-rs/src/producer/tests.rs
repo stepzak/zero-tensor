@@ -180,7 +180,7 @@ fn test_producer_detects_dead_consumer() {
     });
 
     let start = std::time::Instant::now();
-    let result = producer.start_streaming(&TinyDataset, /*batch_size=*/ 1);
+    let result = producer.start_streaming(&TinyDataset, 1);
     let elapsed = start.elapsed();
 
     consumer_handle
