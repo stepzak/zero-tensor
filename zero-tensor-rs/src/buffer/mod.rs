@@ -1,6 +1,9 @@
 pub mod control_block;
 pub mod tensor_meta;
 
+#[cfg(test)]
+mod tests;
+
 use std::{
     ffi::{self, CString, c_int, c_void},
     ptr,

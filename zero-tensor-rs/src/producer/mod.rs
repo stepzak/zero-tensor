@@ -1,3 +1,6 @@
+#[cfg(test)]
+mod tests;
+
 use crate::{
     buffer::{
         ZTBufErr, ZeroTensorBuffer, control_block::ZeroTensorControlBlock, get_dt_size,
@@ -14,7 +17,7 @@ use rayon::{
 };
 use std::{
     fs,
-    io::{self, Write},
+    io::{self, Read, Write},
     mem::offset_of,
     os::unix::net::{UnixListener, UnixStream},
     sync::atomic::AtomicU8,
@@ -308,6 +311,16 @@ impl ZeroTensorProducer {
         stream.write_all(msg.as_bytes())
     }
 
+    fn is_peer_alive(stream: &mut UnixStream) -> bool {
+        let mut buf = [0u8; 1];
+        match stream.read(&mut buf) {
+            Ok(0) => false,
+            Ok(_) => true,
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => true,
+            Err(_) => false,
+        }
+    }
+
     fn start_streaming_loop<D: ZeroTensorDataset>(
         &mut self,
         dataset: &D,
@@ -393,6 +406,9 @@ impl ZeroTensorProducer {
                     }
                     if !cb.is_running() {
                         return Ok(());
+                    }
+                    if !Self::is_peer_alive(stream) {
+                        return Err(io::Error::from(io::ErrorKind::ConnectionAborted).into());
                     }
                     std::hint::spin_loop();
                 }
