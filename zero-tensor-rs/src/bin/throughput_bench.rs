@@ -7,12 +7,12 @@ use zero_tensor_lib::{
     producer::ZeroTensorProducerBuilder,
 };
 
-const BATCH_SIZE: usize = 32;
+const BATCH_SIZE: usize = 48;
 const CHANNELS: ShapeType = 3;
 const HEIGHT: ShapeType = 512;
 const WIDTH: ShapeType = 512;
-const STEPS: usize = 400;
-const NSLOTS: usize = 32;
+const STEPS: u64 = 200;
+const NSLOTS: u64 = 16;
 
 struct BenchDataset {
     raw_item_size: usize,
@@ -40,7 +40,7 @@ impl ZeroTensorDataset for BenchDataset {
     type Error = std::io::Error;
 
     fn len(&self) -> usize {
-        BATCH_SIZE * STEPS
+        BATCH_SIZE * STEPS as usize
     }
 
     fn is_empty(&self) -> bool {
@@ -72,9 +72,9 @@ fn main() {
     }
 
     let item_elements = CHANNELS * HEIGHT * WIDTH;
-    let raw_item_size = item_elements * 4;
+    let raw_item_size = item_elements as u64 * 4;
 
-    let slot_size = (raw_item_size * BATCH_SIZE as u32) + 4096;
+    let slot_size = (raw_item_size * BATCH_SIZE as u64) + 4096;
 
     println!("[Rust Bench] Initializing ZeroTensorProducer...");
     println!(" -> SHM Name: {}", shm_name);

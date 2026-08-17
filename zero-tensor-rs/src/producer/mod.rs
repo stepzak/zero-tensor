@@ -37,7 +37,7 @@ use std::{
 };
 use thiserror::Error;
 
-pub const DEFAULT_SLOTS: usize = 2;
+pub const DEFAULT_SLOTS: u64 = 2;
 pub const CONSUMER_START: &str = "START";
 pub const CONSUMER_STOP: &str = "STOP";
 pub const PRODUCER_EPOCH_DONE: &str = "EPOCH_DONE\n";
@@ -106,12 +106,12 @@ pub enum ZTProducerErr<E: ZTDatasetError + 'static> {
 #[derive(Clone, Debug)]
 pub struct ZeroTensorProducerBuilder {
     // Required
-    slot_size: u32,
+    slot_size: u64,
     shm_filename: String,
     socket_addr: PathBuf,
 
     // Optional
-    num_slots: usize,
+    num_slots: u64,
     read_timeout: Option<u64>,
     overwrite_socket: bool,
     shuffle: bool,
@@ -120,10 +120,10 @@ pub struct ZeroTensorProducerBuilder {
 }
 
 impl ZeroTensorProducerBuilder {
-    pub fn new<P: AsRef<Path>>(slot_size: u32, shm_filename: &str, socket_addr: P) -> Self {
+    pub fn new<P: AsRef<Path>>(slot_size: u64, shm_filename: &str, socket_addr: P) -> Self {
         let mut s_size = slot_size;
-        let rec_slot_size_align = ZeroTensorControlBlock::recommended_slot_alignment() as u32;
-        let min_slot_size_align = ZeroTensorControlBlock::min_slot_alignment() as u32;
+        let rec_slot_size_align = ZeroTensorControlBlock::recommended_slot_alignment() as u64;
+        let min_slot_size_align = ZeroTensorControlBlock::min_slot_alignment() as u64;
 
         if !slot_size.is_multiple_of(min_slot_size_align) {
             //TODO: warning
@@ -143,11 +143,11 @@ impl ZeroTensorProducerBuilder {
         }
     }
 
-    fn round_slot_size(slot_size: u32, rec: u32) -> u32 {
+    fn round_slot_size(slot_size: u64, rec: u64) -> u64 {
         slot_size.div_ceil(rec) * rec
     }
 
-    pub fn num_slots(mut self, slots: usize) -> Self {
+    pub fn num_slots(mut self, slots: u64) -> Self {
         self.num_slots = slots;
         self
     }
@@ -365,9 +365,9 @@ impl ZeroTensorProducer {
             if !cb.is_running() {
                 return Ok(());
             }
-
+            let total_steps = epoch_step + current_epoch * steps_per_epoch;
             if let Some(max) = self.max_steps
-                && epoch_step + current_epoch * steps_per_epoch >= max
+                && total_steps >= max
             {
                 return Ok(());
             }
@@ -417,7 +417,6 @@ impl ZeroTensorProducer {
 
             let slot_idx = (cur_head % cb.nslots() as u64) as usize;
             let offset = ZeroTensorControlBlock::slot_offset(slot_idx, cb.slot_size() as usize);
-
             let (data_start_offset, total_data_bytes, element_size_bytes) =
                 self.prepare_batch_metadata(dataset, batch_indices, offset)?;
             self.copy_batch_to_shm(

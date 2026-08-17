@@ -70,7 +70,7 @@ impl TensorHeader {
         TensorHeader {
             dt,
             ndims,
-            is_ready: 1.into(),
+            is_ready: 0.into(),
         }
     }
 

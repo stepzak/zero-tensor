@@ -10,8 +10,8 @@ use thiserror::Error;
 pub struct ZeroTensorControlBlock {
     pub head: CachePadded<AtomicU64>,
     pub tail: CachePadded<AtomicU64>,
-    nslots: usize,
-    slot_size: u32,
+    nslots: u64,
+    slot_size: u64,
     is_running: AtomicU64,
 }
 
@@ -31,7 +31,7 @@ impl ZeroTensorControlBlock {
     pub const SIZE: usize = size_of::<Self>();
     pub const ALIGN: usize = align_of::<Self>();
 
-    pub fn new(nslots: usize, slot_size: u32) -> Result<Self, ZTControlBlockError> {
+    pub fn new(nslots: u64, slot_size: u64) -> Result<Self, ZTControlBlockError> {
         if nslots == 0 {
             return Err(ZTControlBlockError::InvalidNslots);
         }
@@ -88,11 +88,11 @@ impl ZeroTensorControlBlock {
         Ok(())
     }
 
-    pub fn nslots(&self) -> usize {
+    pub fn nslots(&self) -> u64 {
         self.nslots
     }
 
-    pub fn slot_size(&self) -> u32 {
+    pub fn slot_size(&self) -> u64 {
         self.slot_size
     }
 
@@ -149,7 +149,7 @@ mod tests {
     fn test_invalid_align() {
         let slots = 1;
         let min_slot_size = ZeroTensorControlBlock::min_slot_alignment();
-        let res = ZeroTensorControlBlock::new(slots, min_slot_size as u32 - 1);
+        let res = ZeroTensorControlBlock::new(slots, min_slot_size as u64 - 1);
         match res {
             Err(ZTControlBlockError::InvalidSlotSizeAlignment { got, expected }) => {
                 assert_eq!(got, min_slot_size - 1);
@@ -166,6 +166,6 @@ mod tests {
         let slots = 1;
         let slot_size = ZeroTensorControlBlock::recommended_slot_alignment();
 
-        assert!(ZeroTensorControlBlock::new(slots, slot_size as u32).is_ok())
+        assert!(ZeroTensorControlBlock::new(slots, slot_size as u64).is_ok())
     }
 }
