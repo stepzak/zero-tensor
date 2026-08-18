@@ -4,7 +4,6 @@ import os
 import select
 import socket
 import struct
-import time
 from typing import Generator, Optional
 import atomics
 

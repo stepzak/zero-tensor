@@ -393,10 +393,10 @@ impl ZeroTensorProducer {
             let batch_indices = &indices[start_idx..end_idx];
             let cur_head = cb.head.fetch_add(1, Ordering::AcqRel);
             let cur_tail = cb.tail.load(Ordering::Acquire);
-            if cur_head - cur_tail >= cb.nslots() as u64 {
+            if cur_head - cur_tail >= cb.nslots() {
                 cb.head.fetch_sub(1, Ordering::Release);
                 while cb.head.load(Ordering::Acquire) - cb.tail.load(Ordering::Acquire)
-                    >= cb.nslots() as u64
+                    >= cb.nslots()
                 {
                     if !self.is_running() {
                         self.stop();
@@ -415,7 +415,7 @@ impl ZeroTensorProducer {
                 continue;
             }
 
-            let slot_idx = (cur_head % cb.nslots() as u64) as usize;
+            let slot_idx = (cur_head % cb.nslots()) as usize;
             let offset = ZeroTensorControlBlock::slot_offset(slot_idx, cb.slot_size() as usize);
             let (data_start_offset, total_data_bytes, element_size_bytes) =
                 self.prepare_batch_metadata(dataset, batch_indices, offset)?;

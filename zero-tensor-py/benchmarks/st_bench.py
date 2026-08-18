@@ -3,9 +3,9 @@ import torch
 
 
 ELEMENT_SHAPE = (3, 512, 512) 
-BATCH_SIZE = 32
-PYTORCH_STEPS = 300 
-NWORKERS = 4
+BATCH_SIZE = 48
+PYTORCH_STEPS = 200 
+NWORKERS = 8
 
 
 class DummyDataset(torch.utils.data.Dataset):
@@ -25,8 +25,6 @@ def benchmark_standard_loader():
         batch_size=BATCH_SIZE, 
         num_workers=NWORKERS, 
         persistent_workers=True,
-        pin_memory=True,
-        drop_last=True,
         collate_fn=lambda batch: batch,
     ) 
     

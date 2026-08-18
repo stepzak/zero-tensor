@@ -7,12 +7,12 @@ use zero_tensor_lib::{
     producer::ZeroTensorProducerBuilder,
 };
 
-const BATCH_SIZE: usize = 48;
+const BATCH_SIZE: usize = 12;
 const CHANNELS: ShapeType = 3;
-const HEIGHT: ShapeType = 512;
-const WIDTH: ShapeType = 512;
+const HEIGHT: ShapeType = 1024;
+const WIDTH: ShapeType = 1024;
 const STEPS: u64 = 200;
-const NSLOTS: u64 = 16;
+const NSLOTS: u64 = 10;
 
 struct BenchDataset {
     raw_item_size: usize,
