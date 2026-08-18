@@ -147,7 +147,7 @@ class MockAsyncProducer:
                                 shape_fmt, 
                                 mm, 
                                 slot_offset + HEADER_SIZE + ndims * SHAPE_TYPE_SIZE,
-                                *batch["strides_bytes"]
+                                *batch["strides"]
                             )
                             
                             data_offset = slot_offset + HEADER_SIZE + 2 * ndims * SHAPE_TYPE_SIZE
@@ -215,23 +215,21 @@ def temp_ipc_env(tmp_path):
 
 
 def _make_batch(shape: list[int], values: list[float], dt: int = DT_F32) -> dict:
-    item_size = {DT_F32: 4, DT_F16: 2, DT_I32: 4, DT_I64: 8}.get(dt, 4)
-    
-    strides_bytes = []
-    stride = item_size
-    for dim in reversed(shape):
-        strides_bytes.insert(0, stride)
-        stride *= dim
-    
+    strides = [1] * len(shape)
+
+    for i in range(len(shape) - 2, -1, -1):
+        strides[i] = strides[i + 1] * shape[i + 1]
+
     if dt == DT_F32:
         data = struct.pack(f"<{len(values)}f", *values)
     elif dt == DT_I32:
         data = struct.pack(f"<{len(values)}i", *values)
     else:
-        data = struct.pack(f"<{len(values)}i", *([8]*len(values)))
+        data = struct.pack(f"<{len(values)}i", *([8] * len(values)))
+
     return {
         "shape": shape,
-        "strides_bytes": strides_bytes,
+        "strides": strides,
         "dt": dt,
         "data": data,
     }

@@ -2,11 +2,11 @@ use std::process::Command;
 use std::thread;
 use std::time::Duration;
 use tempfile::tempdir;
-use zero_tensor_lib::{
+use zero_tensor_lib::core::{
     buffer::get_dt_size,
     dataset::{
-        ZeroTensorDataset,
-        item::{ShapeType, TensorBatchLayout, TensorDT},
+        ZTDatasetError, ZeroTensorDataset,
+        item::{ShapeType, ShapeVec, StrideVec, TensorBatchLayout, TensorDT},
     },
     producer::ZeroTensorProducerBuilder,
 };
@@ -19,7 +19,7 @@ impl std::fmt::Display for TestError {
     }
 }
 impl std::error::Error for TestError {}
-impl zero_tensor_lib::dataset::ZTDatasetError for TestError {
+impl ZTDatasetError for TestError {
     fn index(&self) -> Option<usize> {
         None
     }
@@ -33,7 +33,7 @@ impl DynamicDataset {
     fn new(num_items: usize) -> Self {
         let mut rng = fastrand::Rng::new();
         let shapes = (0..num_items)
-            .map(|_| (rng.u32(2..6), rng.u32(2..6)))
+            .map(|_| (rng.usize(2..6), rng.usize(2..6)))
             .collect();
         Self { shapes }
     }
@@ -60,11 +60,11 @@ impl ZeroTensorDataset for DynamicDataset {
             .map(|&i| self.shapes[i])
             .fold((0, 0), |(mh, mw), (h, w)| (mh.max(h), mw.max(w)));
 
-        let mut shape = zero_tensor_lib::dataset::item::ShapeVec::new();
+        let mut shape = ShapeVec::new();
         shape.push(max_h);
         shape.push(max_w);
 
-        let mut strides = zero_tensor_lib::dataset::item::StrideVec::new();
+        let mut strides = StrideVec::new();
         strides.push(max_w);
         strides.push(1);
 
@@ -80,7 +80,7 @@ impl ZeroTensorDataset for DynamicDataset {
 
         for r in 0..h {
             for c in 0..w {
-                f32_buf[(r * w + c) as usize] = (r * 10 + c + idx as u32 * 100) as f32;
+                f32_buf[(r * w + c) as usize] = (r * 10 + c + idx * 100) as f32;
             }
         }
         Ok(())

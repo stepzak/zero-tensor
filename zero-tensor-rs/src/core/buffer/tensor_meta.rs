@@ -3,7 +3,7 @@ use std::{
     sync::atomic::{AtomicU8, Ordering},
 };
 
-use crate::dataset::item::{ShapeType, TensorDT};
+use super::super::dataset::item::{ShapeType, TensorDT};
 
 pub struct TensorDOffsets {
     shapes: usize,

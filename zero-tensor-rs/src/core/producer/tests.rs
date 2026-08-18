@@ -1,4 +1,4 @@
-use crate::dataset::item::TensorBatchLayout;
+use super::super::dataset::item::TensorBatchLayout;
 use tempfile::tempdir;
 
 use super::*;

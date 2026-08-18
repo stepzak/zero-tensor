@@ -54,9 +54,8 @@ class TensorHeaderParser:
         fmt_char = UNSIGNED_FORMATS.get(shape_type_size, 'I')
         
         shape = list(struct.unpack_from(f"<{ndims}{fmt_char}", mmap_obj, shape_offset))
-        rust_strides = list(struct.unpack_from(f"<{ndims}{fmt_char}", mmap_obj, strides_offset))
-        
-        strides = [s // item_size for s in rust_strides]
+        strides = list(struct.unpack_from(f"<{ndims}{fmt_char}", mmap_obj, strides_offset))
+    
         
         num_elements = 1
         for dim in shape:

@@ -1,14 +1,14 @@
 #[cfg(test)]
 mod tests;
 
-use crate::{
+use super::{
     buffer::{
         ZTBufErr, ZeroTensorBuffer, control_block::ZeroTensorControlBlock, get_dt_size,
         tensor_meta::TensorHeader,
     },
     dataset::{
         ZTDatasetError, ZeroTensorDataset,
-        item::{ShapeType, ShapeVec, StrideType, StrideVec, TensorDT},
+        item::{ShapeType, ShapeVec, StrideVec, TensorDT},
     },
 };
 use rayon::{
@@ -478,14 +478,14 @@ impl ZeroTensorProducer {
 
         let element_size_bytes = layout.total_elements() * get_dt_size(dt);
 
-        let dt_size = get_dt_size(dt) as StrideType;
         let mut batch_strides = StrideVec::with_capacity(ndims);
 
-        batch_strides.push(element_size_bytes as StrideType);
-
         for &s in layout.strides() {
-            batch_strides.push(s * dt_size);
+            batch_strides.push(s);
         }
+
+
+        batch_strides.push(1);
 
         let header_meta = TensorHeader::new(dt, ndims as u8);
         let offs = header_meta.get_offsets();

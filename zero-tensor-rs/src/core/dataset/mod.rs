@@ -1,6 +1,6 @@
 use std::{error::Error, fmt::Debug};
 
-use crate::dataset::item::TensorBatchLayout;
+use item::TensorBatchLayout;
 
 pub mod item;
 

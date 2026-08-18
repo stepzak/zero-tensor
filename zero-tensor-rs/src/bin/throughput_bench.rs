@@ -1,5 +1,5 @@
 use std::path::Path;
-use zero_tensor_lib::{
+use zero_tensor_lib::core::{
     dataset::{
         ZeroTensorDataset,
         item::{ShapeType, TensorBatchLayout, TensorDT},
