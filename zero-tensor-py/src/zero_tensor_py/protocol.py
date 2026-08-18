@@ -29,10 +29,6 @@ class TensorHeaderParser:
     """
     Parser TensorHeader from shared memory
     """
-    @staticmethod
-    def is_slot_ready(mmap_obj, slot_offset: int, is_ready_offset_in_header: int) -> bool:
-        val = struct.unpack_from("<B", mmap_obj, slot_offset + is_ready_offset_in_header)[0]
-        return val == 1
 
     @staticmethod
     def parse_meta(

@@ -115,10 +115,10 @@ impl ZeroTensorBuffer {
             .map_err(|_| ZTBufErr::InvalidFilename("name contains internal zero byte"))
     }
 
-    pub fn new(name: &str, slot_size: u32, nslots: usize) -> Result<Self, ZTBufErr> {
+    pub fn new(name: &str, slot_size: u64, nslots: u64) -> Result<Self, ZTBufErr> {
         let oflag = libc::O_CREAT | libc::O_RDWR;
         let mode = 0o666;
-        let total_size = slot_size * nslots as u32 + size_of::<ZeroTensorControlBlock>() as u32;
+        let total_size = slot_size * nslots + size_of::<ZeroTensorControlBlock>() as u64;
         let cname = ZeroTensorBuffer::get_validated_name(name)?;
 
         let fd = Self::open_shm(&cname, oflag, mode)?;

@@ -16,10 +16,11 @@ def benchmark_zero_tensor():
 
     start_time = time.perf_counter()
     total_bytes = 0
-    
+    counter = 0
     with ZeroTensorConsumer(socket_path, shm_name) as consumer:
         for batch in consumer:
             total_bytes += batch.nbytes
+            counter += 1
             _ = batch[0, 0, 0, 0].item()
             
     end_time = time.perf_counter()

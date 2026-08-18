@@ -4,7 +4,6 @@ import os
 import select
 import socket
 import struct
-import time
 from typing import Generator, Optional
 import atomics
 
@@ -169,6 +168,11 @@ class ZeroTensorConsumer:
     def _store_is_running(self, value: int) -> None:
         with atomics.atomicview(buffer=self._is_running_view, atype=atomics.UINT) as a:
             a.store(value, order=atomics.MemoryOrder.RELEASE)
+
+    def _load_is_ready(self, slot_offset: int) -> bool:
+        view = memoryview(self.mem)[slot_offset + self.is_ready_offset : slot_offset + self.is_ready_offset + 1]
+        with atomics.atomicview(buffer=view, atype=atomics.UINT, width = 1) as a:
+            return a.load(order=atomics.MemoryOrder.ACQUIRE) == 1
         
     def __iter__(self) -> Generator[torch.Tensor, None, None]:
         if self.sock is None or self.mem is None:
@@ -206,9 +210,20 @@ class ZeroTensorConsumer:
             slot_idx = tail % self.nslots
             slot_offset = self.cb_size + (slot_idx * self.slot_size)
             
-            if not TensorHeaderParser.is_slot_ready(self.mem, slot_offset, self.is_ready_offset):
-                time.sleep(_SOCK_WAIT_POLL_TIMEOUT)
-                continue
+            while not self._load_is_ready(slot_offset):
+                try:
+                    readable, _, _ = select.select([self.sock], [], [], _SOCK_WAIT_POLL_TIMEOUT)
+                    if readable:
+                        is_running = self._load_is_running()
+                        if is_running == 0:
+                            return
+                        chunk = self.sock.recv(1024)
+                        if chunk == b"":
+                            raise zt_exc.ZTConnectionError("Producer disconnected")
+                        if _CONTROL_NEXT_EPOCH_MSG in chunk:
+                            return
+                except BlockingIOError:
+                    pass
                 
             shape, strides, dt, data_offset, data_size = TensorHeaderParser.parse_meta(
                 self.mem, slot_offset, self.header_size, self.dt_offset, self.ndims_offset, self.shape_type_size
