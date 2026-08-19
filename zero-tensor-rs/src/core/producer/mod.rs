@@ -484,7 +484,6 @@ impl ZeroTensorProducer {
             batch_strides.push(s);
         }
 
-
         batch_strides.push(1);
 
         let header_meta = TensorHeader::new(dt, ndims as u8);
