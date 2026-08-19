@@ -13,7 +13,7 @@ use thiserror::Error;
 
 use libc::{mode_t, shm_open};
 
-use crate::{
+use super::{
     buffer::{
         control_block::{ZTControlBlockError, ZeroTensorControlBlock},
         tensor_meta::TensorHeader,
@@ -179,7 +179,7 @@ impl ZeroTensorBuffer {
         }
     }
 
-    ///Strides must be in bytes!
+    ///Strides must be in number of elements!
     pub fn write_tensor(
         &mut self,
         offset: usize,
@@ -198,8 +198,8 @@ impl ZeroTensorBuffer {
         let base = unsafe { self.addr.add(offset) };
         let offs = meta.get_offsets();
 
-        let data_count: u32 = shape.iter().product();
-        let data_size = get_dt_size(dt) * data_count as usize;
+        let data_count: usize = shape.iter().product();
+        let data_size = get_dt_size(dt) * data_count;
         let t_size = offset + offs.data() + data_size;
         if t_size > self.total_size {
             return Err(ZTBufErr::BufferOverflow(self.total_size, t_size));

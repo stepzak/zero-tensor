@@ -1,6 +1,5 @@
-pub mod buffer;
-pub mod dataset;
-pub mod producer;
+pub mod core;
+pub mod transform;
 
 #[cfg(test)]
 mod tests {
