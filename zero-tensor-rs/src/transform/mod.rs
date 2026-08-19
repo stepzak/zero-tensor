@@ -3,8 +3,8 @@ pub mod scale;
 
 use crate::core::dataset::item::TensorViewMut;
 
-pub use scale::Scale;
 pub use error::TransformError;
+pub use scale::Scale;
 
 pub trait Transform {
     type Error;

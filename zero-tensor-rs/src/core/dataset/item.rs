@@ -69,7 +69,7 @@ impl TensorBatchLayout {
     }
 
     pub fn total_elements(&self) -> usize {
-        self.shape.iter().product::<ShapeType>() as usize
+        self.shape.iter().product::<ShapeType>()
     }
 
     pub fn total_bytes(&self) -> usize {
@@ -130,6 +130,220 @@ impl TensorBatchLayout {
                 let view = ArrayViewMutD::from_shape(layout, typed_slice)?;
                 Ok(TensorViewMut::F16(view))
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bytemuck::cast_slice_mut;
+
+    #[test]
+    fn view_contiguous_1d() {
+        let mut data = vec![1.0f32, 2.0, 3.0, 4.0];
+
+        let raw_bytes = cast_slice_mut(&mut data);
+
+        let layout = TensorBatchLayout::new(vec![4].into(), vec![1].into(), TensorDT::F32);
+
+        let mut view = layout.try_view_mut(raw_bytes).unwrap();
+
+        match &mut view {
+            TensorViewMut::F32(v) => {
+                assert_eq!(v[[0]], 1.0);
+                assert_eq!(v[[1]], 2.0);
+                assert_eq!(v[[2]], 3.0);
+                assert_eq!(v[[3]], 4.0);
+
+                v[[2]] = 42.0;
+            }
+            _ => panic!("expected F32 view"),
+        }
+
+        assert_eq!(data, vec![1.0, 2.0, 42.0, 4.0]);
+    }
+
+    #[test]
+    fn view_contiguous_2d() {
+        let mut data = vec![0.0f32, 1.0, 2.0, 3.0, 4.0, 5.0];
+
+        let raw_bytes = cast_slice_mut(&mut data);
+
+        let layout = TensorBatchLayout::new(vec![2, 3].into(), vec![3, 1].into(), TensorDT::F32);
+
+        let mut view = layout.try_view_mut(raw_bytes).unwrap();
+
+        match &mut view {
+            TensorViewMut::F32(v) => {
+                assert_eq!(v[[0, 0]], 0.0);
+                assert_eq!(v[[0, 1]], 1.0);
+                assert_eq!(v[[0, 2]], 2.0);
+
+                assert_eq!(v[[1, 0]], 3.0);
+                assert_eq!(v[[1, 1]], 4.0);
+                assert_eq!(v[[1, 2]], 5.0);
+
+                v[[1, 2]] = 123.0;
+            }
+            _ => panic!("expected F32 view"),
+        }
+
+        assert_eq!(data[5], 123.0);
+    }
+
+    #[test]
+    fn view_strided() {
+        let mut data = vec![0.0f32, 1.0, 2.0, 3.0, 4.0, 5.0];
+
+        let raw_bytes = cast_slice_mut(&mut data);
+
+        let layout = TensorBatchLayout::new(vec![2, 2].into(), vec![3, 1].into(), TensorDT::F32);
+
+        let mut view = layout.try_view_mut(raw_bytes).unwrap();
+
+        match &mut view {
+            TensorViewMut::F32(v) => {
+                assert_eq!(v[[0, 0]], 0.0);
+                assert_eq!(v[[0, 1]], 1.0);
+
+                assert_eq!(v[[1, 0]], 3.0);
+                assert_eq!(v[[1, 1]], 4.0);
+
+                v[[1, 0]] = 42.0;
+            }
+            _ => panic!("expected F32 view"),
+        }
+
+        assert_eq!(data, vec![0.0, 1.0, 2.0, 42.0, 4.0, 5.0]);
+    }
+
+    #[test]
+    fn view_3d_contiguous() {
+        let mut data: Vec<f32> = (0..24).map(|x| x as f32).collect();
+
+        let raw_bytes = cast_slice_mut(&mut data);
+
+        let layout =
+            TensorBatchLayout::new(vec![2, 3, 4].into(), vec![12, 4, 1].into(), TensorDT::F32);
+
+        let mut view = layout.try_view_mut(raw_bytes).unwrap();
+
+        match &mut view {
+            TensorViewMut::F32(v) => {
+                assert_eq!(v[[0, 0, 0]], 0.0);
+                assert_eq!(v[[0, 0, 3]], 3.0);
+
+                assert_eq!(v[[0, 1, 0]], 4.0);
+                assert_eq!(v[[0, 2, 0]], 8.0);
+
+                assert_eq!(v[[1, 0, 0]], 12.0);
+                assert_eq!(v[[1, 2, 3]], 23.0);
+
+                v[[1, 2, 3]] = 999.0;
+            }
+            _ => panic!("expected F32 view"),
+        }
+
+        assert_eq!(data[23], 999.0);
+    }
+
+    #[test]
+    fn view_mutation_is_zero_copy() {
+        let mut data = vec![1.0f32, 2.0, 3.0];
+
+        let raw_bytes = cast_slice_mut(&mut data);
+
+        let layout = TensorBatchLayout::new(vec![3].into(), vec![1].into(), TensorDT::F32);
+
+        let mut view = layout.try_view_mut(raw_bytes).unwrap();
+
+        match &mut view {
+            TensorViewMut::F32(v) => {
+                v[[0]] = 100.0;
+                v[[1]] = 200.0;
+                v[[2]] = 300.0;
+            }
+            _ => panic!("expected F32 view"),
+        }
+
+        assert_eq!(data, vec![100.0, 200.0, 300.0]);
+    }
+
+    #[rstest::rstest]
+    #[case(TensorDT::U8, 1)]
+    #[case(TensorDT::I8, 1)]
+    #[case(TensorDT::I32, 4)]
+    #[case(TensorDT::I64, 8)]
+    #[case(TensorDT::F16, 2)]
+    #[case(TensorDT::BF16, 2)]
+    #[case(TensorDT::F32, 4)]
+    #[case(TensorDT::F64, 8)]
+    fn view_correct_dtype(#[case] dt: TensorDT, #[case] element_size: usize) {
+        let element_count = 4;
+        let mut raw_bytes = vec![0u8; element_count * element_size];
+
+        let layout = TensorBatchLayout::new(vec![element_count].into(), vec![1].into(), dt);
+
+        let view = layout.try_view_mut(&mut raw_bytes).unwrap();
+
+        match (dt, view) {
+            (TensorDT::U8, TensorViewMut::U8(_))
+            | (TensorDT::I8, TensorViewMut::I8(_))
+            | (TensorDT::I32, TensorViewMut::I32(_))
+            | (TensorDT::I64, TensorViewMut::I64(_))
+            | (TensorDT::F16, TensorViewMut::F16(_))
+            | (TensorDT::BF16, TensorViewMut::BF16(_))
+            | (TensorDT::F32, TensorViewMut::F32(_))
+            | (TensorDT::F64, TensorViewMut::F64(_)) => {}
+
+            _ => panic!("wrong TensorViewMut variant for {:?}", dt),
+        }
+    }
+
+    #[test]
+    fn view_rejects_wrong_byte_length() {
+        let mut raw_bytes = vec![0u8; 3];
+
+        let layout = TensorBatchLayout::new(vec![1].into(), vec![1].into(), TensorDT::F32);
+
+        assert!(layout.try_view_mut(&mut raw_bytes).is_err());
+    }
+
+    #[test]
+    fn view_rejects_too_small_buffer() {
+        let mut raw_bytes = vec![0u8; 8];
+
+        let layout = TensorBatchLayout::new(vec![4].into(), vec![1].into(), TensorDT::F32);
+
+        assert!(layout.try_view_mut(&mut raw_bytes).is_err());
+    }
+
+    #[test]
+    fn view_nchw_layout() {
+        let mut data: Vec<f32> = (0..24).map(|x| x as f32).collect();
+
+        let raw_bytes = bytemuck::cast_slice_mut(&mut data);
+
+        let layout = TensorBatchLayout::new(
+            vec![2, 3, 2, 2].into(),
+            vec![12, 4, 2, 1].into(),
+            TensorDT::F32,
+        );
+
+        let mut view = layout.try_view_mut(raw_bytes).unwrap();
+
+        match &mut view {
+            TensorViewMut::F32(v) => {
+                assert_eq!(v[[0, 0, 0, 0]], 0.0);
+                assert_eq!(v[[0, 0, 0, 1]], 1.0);
+                assert_eq!(v[[0, 0, 1, 0]], 2.0);
+
+                assert_eq!(v[[0, 1, 0, 0]], 4.0);
+                assert_eq!(v[[1, 0, 0, 0]], 12.0);
+                assert_eq!(v[[1, 2, 1, 1]], 23.0);
+            }
+            _ => panic!("expected F32 view"),
         }
     }
 }
