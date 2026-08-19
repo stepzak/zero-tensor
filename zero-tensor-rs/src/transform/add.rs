@@ -1,4 +1,4 @@
-use super::{Transform, TransformError};
+use super::{Transform, TransformError, helpers::is_float_int};
 use crate::core::dataset::item::TensorViewMut;
 
 pub enum OverflowMode {
@@ -22,10 +22,6 @@ impl Add {
     pub fn arith_overflow(self, overflow: OverflowMode) -> Self {
         Self { overflow, ..self }
     }
-}
-
-fn is_float_int(val: f64) -> bool {
-    val.fract() == 0.0
 }
 
 impl Transform for Add {
