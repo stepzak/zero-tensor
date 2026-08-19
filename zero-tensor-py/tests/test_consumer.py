@@ -6,7 +6,7 @@ import os
 import time
 import pytest
 import torch
-from zero_tensor_py.protocol import DT_F32, DT_F16, DT_I32, DT_I64
+from zero_tensor_py.protocol import DT_F32, DT_I32
 from zero_tensor_py.consumer import ZeroTensorConsumer, VERSION, _PROTO_BEGIN_STR
 import zero_tensor_py.exceptions as exc
 
