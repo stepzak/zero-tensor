@@ -1,7 +1,8 @@
 use super::{ScalarConversionError, helpers::is_float_int};
+pub mod cmp;
 pub mod ops;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum Scalar {
     U8(u8),
     I8(i8),
@@ -152,6 +153,20 @@ impl_half_try_from! {half::f16}
 impl_float_try_from! {f32}
 impl_float_try_from! {f64}
 
+macro_rules! float_fn {
+    ($fn_name:ident, $ret:ty, $fb:expr) => {
+        pub fn $fn_name(self) -> $ret {
+            match self {
+                Scalar::BF16(f) => f.$fn_name(),
+                Scalar::F16(f) => f.$fn_name(),
+                Scalar::F32(f) => f.$fn_name(),
+                Scalar::F64(f) => f.$fn_name(),
+                _ => $fb,
+            }
+        }
+    };
+}
+
 impl Scalar {
     pub fn to_f32_lossy(self) -> f32 {
         match self {
@@ -178,6 +193,10 @@ impl Scalar {
             Scalar::F16(v) => v.to_f64(),
         }
     }
+
+    float_fn! {is_nan, bool, false}
+    float_fn! {is_finite, bool, true}
+    float_fn! {is_infinite, bool, false}
 }
 
 #[cfg(test)]

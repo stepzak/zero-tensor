@@ -27,14 +27,14 @@ impl Clamp {
         if min.is_some_and(f64::is_nan) || max.is_some_and(f64::is_nan) {
             return Err(TransformError::InvalidValue);
         }
-        if let (Some(mx), Some(mn)) = (max, min)
-            && mx < mn
-        {
-            return Err(TransformError::InvalidValue);
+        if let (Some(mx), Some(mn)) = (max, min) {
+            if mx < mn {
+                return Err(TransformError::InvalidValue);
+            }
         }
         Ok(Self {
-            min,
-            max,
+            min: min,
+            max: max,
             int_rounding_mode: IntRoundingMode::Error,
             overflow_mode: OverflowMode::Error,
         })
@@ -57,15 +57,15 @@ impl Clamp {
     fn check_int(&self) -> Result<(), TransformError> {
         match self.int_rounding_mode {
             IntRoundingMode::Error => {
-                if let Some(max) = self.max
-                    && !is_float_int(max)
-                {
-                    return Err(TransformError::InvalidValue);
+                if let Some(max) = self.max {
+                    if !is_float_int(max) {
+                        return Err(TransformError::InvalidValue);
+                    }
                 }
-                if let Some(min) = self.min
-                    && !is_float_int(min)
-                {
-                    return Err(TransformError::InvalidValue);
+                if let Some(min) = self.min {
+                    if !is_float_int(min) {
+                        return Err(TransformError::InvalidValue);
+                    }
                 }
                 Ok(())
             }
@@ -245,30 +245,30 @@ impl Transform for Clamp {
                 let (mn, mx) = check_overflow!(f32);
                 t.map_inplace(|x| {
                     let x64 = *x as f64;
-                    if let Some(min) = mn
-                        && x64 < min
-                    {
-                        *x = min as f32;
+                    if let Some(min) = mn {
+                        if x64 < min {
+                            *x = min as f32;
+                        }
                     }
-                    if let Some(max) = mx
-                        && x64 > max
-                    {
-                        *x = max as f32;
+                    if let Some(max) = mx {
+                        if x64 > max {
+                            *x = max as f32;
+                        }
                     }
                 });
             }
             TensorViewMut::F64(t) => {
                 t.map_inplace(|x| {
                     let x64 = *x;
-                    if let Some(min) = self.min
-                        && x64 < min
-                    {
-                        *x = min;
+                    if let Some(min) = self.min {
+                        if x64 < min {
+                            *x = min;
+                        }
                     }
-                    if let Some(max) = self.max
-                        && x64 > max
-                    {
-                        *x = max;
+                    if let Some(max) = self.max {
+                        if x64 > max {
+                            *x = max;
+                        }
                     }
                 });
             }
