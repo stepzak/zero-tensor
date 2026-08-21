@@ -61,12 +61,11 @@ impl Transform for Add {
             TensorViewMut::F16(t) => add!(half::f16, t),
             TensorViewMut::U8(t) => {
                 let val: i32 = self.value.try_into()?;
-                let a = val.abs();
-                if a > u8::MAX as i32 {
+                if val < -(u8::MAX as i32) || val > (u8::MAX as i32) {
                     return Err(ScalarConversionError::Overflow.into());
                 }
-                let v = a as u8;
                 if val < 0 {
+                    let v = (-val) as u8;
                     match self.overflow {
                         OverflowMode::Error => {
                             for x in t.iter() {
@@ -79,6 +78,7 @@ impl Transform for Add {
                         }
                     }
                 } else {
+                    let v = val as u8;
                     match self.overflow {
                         OverflowMode::Error => {
                             for x in t.iter() {

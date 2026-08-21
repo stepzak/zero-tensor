@@ -80,7 +80,10 @@ impl Transform for Scale {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{core::dataset::item::{TensorBatchLayout, TensorDT}, transform::ScalarConversionError};
+    use crate::{
+        core::dataset::item::{TensorBatchLayout, TensorDT},
+        transform::ScalarConversionError,
+    };
     use rstest::rstest;
 
     macro_rules! bytes {
@@ -554,7 +557,12 @@ mod tests {
 
         let result = Scale::new(2.5).apply(&mut tensor);
 
-        assert!(matches!(result, Err(TransformError::ScalarConversion(ScalarConversionError::FractionalValue))));
+        assert!(matches!(
+            result,
+            Err(TransformError::ScalarConversion(
+                ScalarConversionError::FractionalValue
+            ))
+        ));
 
         assert_eq!(raw_bytes, original);
     }
