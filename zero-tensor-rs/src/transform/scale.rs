@@ -14,9 +14,7 @@ impl Scale {
 }
 
 impl Transform for Scale {
-    type Error = TransformError;
-
-    fn apply(&self, tensor: &mut TensorViewMut) -> Result<(), Self::Error> {
+    fn apply(&self, tensor: &mut TensorViewMut) -> Result<(), TransformError> {
         match tensor {
             TensorViewMut::BF16(t) => {
                 let factor: half::bf16 = self.factor.try_into()?;

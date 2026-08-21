@@ -204,9 +204,7 @@ impl Clamp {
 }
 
 impl Transform for Clamp {
-    type Error = TransformError;
-
-    fn apply(&self, tensor: &mut TensorViewMut) -> Result<(), Self::Error> {
+    fn apply(&self, tensor: &mut TensorViewMut) -> Result<(), TransformError> {
         macro_rules! match_max_min {
             ($max:expr, $min:expr, $t:expr) => {
                 match ($min, $max) {
