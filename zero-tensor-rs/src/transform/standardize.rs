@@ -13,7 +13,7 @@ impl Standardize {
             return Err(TransformError::InvalidValue);
         }
 
-        Ok(Self { mean: mean, std })
+        Ok(Self { mean, std })
     }
 }
 
