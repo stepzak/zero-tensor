@@ -1,5 +1,6 @@
 use super::{ScalarConversionError, helpers::is_float_int};
 pub mod cmp;
+pub mod is_zero;
 pub mod ops;
 
 #[derive(Clone, Copy, Debug)]

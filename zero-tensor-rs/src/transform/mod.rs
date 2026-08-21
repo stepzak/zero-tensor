@@ -4,6 +4,7 @@ pub mod error;
 mod helpers;
 pub mod scalar;
 pub mod scale;
+pub mod standardize;
 
 use crate::core::dataset::item::TensorViewMut;
 
@@ -14,7 +15,5 @@ pub use scalar::{IntoScalarOption, Scalar};
 pub use scale::Scale;
 
 pub trait Transform {
-    type Error;
-
-    fn apply(&self, tensor: &mut TensorViewMut) -> Result<(), Self::Error>;
+    fn apply(&self, tensor: &mut TensorViewMut) -> Result<(), TransformError>;
 }

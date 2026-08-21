@@ -25,9 +25,7 @@ impl Add {
 }
 
 impl Transform for Add {
-    type Error = TransformError;
-
-    fn apply(&self, tensor: &mut TensorViewMut) -> Result<(), Self::Error> {
+    fn apply(&self, tensor: &mut TensorViewMut) -> Result<(), TransformError> {
         if let Ok(u) = <Scalar as TryInto<u8>>::try_into(self.value)
             && u == 0
         {
