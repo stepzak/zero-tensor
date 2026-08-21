@@ -1,4 +1,6 @@
-use super::{TensorViewMut, Transform, TransformError, helpers::is_float_int};
+use crate::transform::{IntoScalarOption, Scalar, ScalarConversionError};
+
+use super::{TensorViewMut, Transform, TransformError};
 
 pub enum IntRoundingMode {
     Error,
@@ -13,18 +15,18 @@ pub enum OverflowMode {
 }
 
 pub struct Clamp {
-    min: Option<f64>,
-    max: Option<f64>,
+    min: Option<Scalar>,
+    max: Option<Scalar>,
     int_rounding_mode: IntRoundingMode,
     overflow_mode: OverflowMode,
 }
 
 impl Clamp {
-    pub fn new<T: Into<Option<f64>>>(min: T, max: T) -> Result<Self, TransformError> {
-        let min = min.into();
-        let max = max.into();
+    pub fn new<T: IntoScalarOption>(min: T, max: T) -> Result<Self, TransformError> {
+        let min = min.into_scalar_option();
+        let max = max.into_scalar_option();
 
-        if min.is_some_and(f64::is_nan) || max.is_some_and(f64::is_nan) {
+        if min.is_some_and(|x| x.is_nan()) || max.is_some_and(|x| x.is_nan()) {
             return Err(TransformError::InvalidValue);
         }
         if let (Some(mx), Some(mn)) = (max, min)
@@ -54,22 +56,149 @@ impl Clamp {
         }
     }
 
-    fn check_int(&self) -> Result<(), TransformError> {
-        match self.int_rounding_mode {
+    fn scalar_to_f64(value: Scalar) -> Result<f64, TransformError> {
+        value.try_into().map_err(Into::into)
+    }
+
+    fn rounded_scalar(&self, value: Scalar) -> Result<Scalar, TransformError> {
+        let value = Self::scalar_to_f64(value)?;
+
+        let value = match self.int_rounding_mode {
             IntRoundingMode::Error => {
-                if let Some(max) = self.max
-                    && !is_float_int(max)
-                {
-                    return Err(TransformError::InvalidValue);
-                }
-                if let Some(min) = self.min
-                    && !is_float_int(min)
-                {
-                    return Err(TransformError::InvalidValue);
-                }
-                Ok(())
+                return Err(ScalarConversionError::FractionalValue.into());
             }
-            _ => Ok(()),
+            IntRoundingMode::Round => value.round(),
+            IntRoundingMode::Floor => value.floor(),
+            IntRoundingMode::Ceil => value.ceil(),
+        };
+
+        Ok(Scalar::F64(value))
+    }
+
+    fn resolve_int<T>(&self, value: Scalar, min: T, max: T) -> Result<T, TransformError>
+    where
+        T: TryFrom<Scalar, Error = ScalarConversionError> + Copy + Into<Scalar>,
+    {
+        match value.try_into() {
+            Ok(value) => Ok(value),
+
+            Err(ScalarConversionError::FractionalValue) => {
+                let rounded = self.rounded_scalar(value)?;
+
+                match rounded.try_into() {
+                    Ok(value) => Ok(value),
+
+                    Err(ScalarConversionError::Overflow) => {
+                        let rounded_f64 = Self::scalar_to_f64(rounded)?;
+
+                        match self.overflow_mode {
+                            OverflowMode::Error => Err(ScalarConversionError::Overflow.into()),
+                            OverflowMode::Clamp => {
+                                let min_scalar: Scalar = min.into();
+
+                                if Scalar::F64(rounded_f64) < min_scalar {
+                                    Ok(min)
+                                } else {
+                                    Ok(max)
+                                }
+                            }
+                        }
+                    }
+
+                    Err(e) => Err(e.into()),
+                }
+            }
+
+            Err(ScalarConversionError::Overflow) => match self.overflow_mode {
+                OverflowMode::Error => Err(ScalarConversionError::Overflow.into()),
+
+                OverflowMode::Clamp => {
+                    let source = Self::scalar_to_f64(value)?;
+
+                    let min_scalar: Scalar = min.into();
+                    let max_scalar: Scalar = max.into();
+
+                    let min_value = Self::scalar_to_f64(min_scalar)?;
+                    let max_value = Self::scalar_to_f64(max_scalar)?;
+
+                    if source < min_value {
+                        Ok(min)
+                    } else if source > max_value {
+                        Ok(max)
+                    } else {
+                        unreachable!("conversion overflow without crossing target bounds");
+                    }
+                }
+            },
+
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    fn resolve_f32(&self, value: Scalar) -> Result<f32, TransformError> {
+        match value.try_into() {
+            Ok(value) => Ok(value),
+
+            Err(ScalarConversionError::Overflow) => match self.overflow_mode {
+                OverflowMode::Error => Err(ScalarConversionError::Overflow.into()),
+                OverflowMode::Clamp => {
+                    let value = Self::scalar_to_f64(value)?;
+
+                    if value < f32::MIN as f64 {
+                        Ok(f32::MIN)
+                    } else {
+                        Ok(f32::MAX)
+                    }
+                }
+            },
+
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    fn resolve_f64(&self, value: Scalar) -> Result<f64, TransformError> {
+        Ok(value.try_into()?)
+    }
+
+    fn resolve_f16(&self, value: Scalar) -> Result<half::f16, TransformError> {
+        match value.try_into() {
+            Ok(value) => Ok(value),
+
+            Err(ScalarConversionError::Overflow) => match self.overflow_mode {
+                OverflowMode::Error => Err(ScalarConversionError::Overflow.into()),
+                OverflowMode::Clamp => {
+                    let value = Self::scalar_to_f64(value)?;
+
+                    if value < half::f16::MIN.to_f64() {
+                        Ok(half::f16::MIN)
+                    } else {
+                        Ok(half::f16::MAX)
+                    }
+                }
+            },
+
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    fn resolve_bf16(&self, value: Scalar) -> Result<half::bf16, TransformError> {
+        match value.try_into() {
+            Ok(value) => Ok(value),
+
+            Err(ScalarConversionError::Overflow) => match self.overflow_mode {
+                OverflowMode::Error => Err(ScalarConversionError::Overflow.into()),
+                OverflowMode::Clamp => {
+                    let value = Self::scalar_to_f64(value)?;
+
+                    if value < half::bf16::MIN.to_f64() {
+                        Ok(half::bf16::MIN)
+                    } else {
+                        Ok(half::bf16::MAX)
+                    }
+                }
+            },
+
+            Err(e) => Err(e.into()),
         }
     }
 }
@@ -78,213 +207,122 @@ impl Transform for Clamp {
     type Error = TransformError;
 
     fn apply(&self, tensor: &mut TensorViewMut) -> Result<(), Self::Error> {
-        macro_rules! halfed_check_overflow {
-            ($t:ty) => {{
-                let new_max = if let Some(max) = self.max {
-                    if max > <$t>::MAX.to_f64() {
-                        match self.overflow_mode {
-                            OverflowMode::Error => {
-                                return Err(TransformError::InvalidValue);
-                            }
-                            OverflowMode::Clamp => Some(<$t>::MAX.to_f64()),
-                        }
-                    } else if max < <$t>::MIN.to_f64() {
-                        match self.overflow_mode {
-                            OverflowMode::Error => {
-                                return Err(TransformError::InvalidValue);
-                            }
-                            OverflowMode::Clamp => Some(<$t>::MIN.to_f64()),
-                        }
-                    } else {
-                        self.max
+        macro_rules! match_max_min {
+            ($max:expr, $min:expr, $t:expr) => {
+                match ($min, $max) {
+                    (Some(min), Some(max)) => {
+                        $t.map_inplace(|x| {
+                            *x = (*x).clamp(min, max);
+                        });
                     }
-                } else {
-                    self.max
-                };
-                let new_min = if let Some(min) = self.min {
-                    if min > <$t>::MAX.to_f64() {
-                        match self.overflow_mode {
-                            OverflowMode::Error => {
-                                return Err(TransformError::InvalidValue);
-                            }
-                            OverflowMode::Clamp => Some(<$t>::MAX.to_f64()),
-                        }
-                    } else if min < <$t>::MIN.to_f64() {
-                        match self.overflow_mode {
-                            OverflowMode::Error => {
-                                return Err(TransformError::InvalidValue);
-                            }
-                            OverflowMode::Clamp => Some(<$t>::MIN.to_f64()),
-                        }
-                    } else {
-                        self.min
-                    }
-                } else {
-                    self.min
-                };
-                (new_min, new_max)
-            }};
-        }
 
-        macro_rules! halfed_clamp {
-            ($tensor:expr, $t:ty) => {{
-                let (mn, mx) = halfed_check_overflow!($t);
-                $tensor.map_inplace(|x| {
-                    let x64 = x.to_f64();
-                    if let Some(min) = mn {
-                        if x64 < min {
-                            *x = <$t>::from_f64(min);
-                        }
+                    (Some(min), None) => {
+                        $t.map_inplace(|x| {
+                            *x = (*x).max(min);
+                        });
                     }
-                    if let Some(max) = mx {
-                        if x64 > max {
-                            *x = <$t>::from_f64(max);
-                        }
-                    }
-                })
-            }};
-        }
 
-        macro_rules! check_overflow {
-            ($t:ty) => {{
-                let new_max = if let Some(max) = self.max {
-                    if max > <$t>::MAX as f64 {
-                        match self.overflow_mode {
-                            OverflowMode::Error => {
-                                return Err(TransformError::InvalidValue);
-                            }
-                            OverflowMode::Clamp => Some(<$t>::MAX as f64),
-                        }
-                    } else if max < <$t>::MIN as f64 {
-                        match self.overflow_mode {
-                            OverflowMode::Error => {
-                                return Err(TransformError::InvalidValue);
-                            }
-                            OverflowMode::Clamp => Some(<$t>::MIN as f64),
-                        }
-                    } else {
-                        self.max
+                    (None, Some(max)) => {
+                        $t.map_inplace(|x| {
+                            *x = (*x).min(max);
+                        });
                     }
-                } else {
-                    self.max
-                };
-                let new_min = if let Some(min) = self.min {
-                    if min > <$t>::MAX as f64 {
-                        match self.overflow_mode {
-                            OverflowMode::Error => {
-                                return Err(TransformError::InvalidValue);
-                            }
-                            OverflowMode::Clamp => Some(<$t>::MAX as f64),
-                        }
-                    } else if min < <$t>::MIN as f64 {
-                        match self.overflow_mode {
-                            OverflowMode::Error => {
-                                return Err(TransformError::InvalidValue);
-                            }
-                            OverflowMode::Clamp => Some(<$t>::MIN as f64),
-                        }
-                    } else {
-                        self.min
-                    }
-                } else {
-                    self.min
-                };
-                (new_min, new_max)
-            }};
-        }
 
-        macro_rules! int_clamp {
-            ($tensor:expr, $t:ty) => {{
-                Self::check_int(&self)?;
-                let (mn, mx) = check_overflow!($t);
-                $tensor.map_inplace(|x| {
-                    let xto = (*x).clone() as f64;
-                    if let Some(max) = mx {
-                        if xto > max {
-                            if is_float_int(max) {
-                                *x = max as $t;
-                            } else {
-                                let v = match self.int_rounding_mode {
-                                    IntRoundingMode::Round => max.round(),
-                                    IntRoundingMode::Ceil => max.ceil(),
-                                    IntRoundingMode::Floor => max.floor(),
-                                    _ => {
-                                        unreachable!();
-                                    }
-                                };
-                                *x = v as $t;
-                            }
-                        }
-                    }
-                    if let Some(min) = mn {
-                        if xto < min {
-                            if is_float_int(min) {
-                                *x = min as $t;
-                            } else {
-                                let val = match self.int_rounding_mode {
-                                    IntRoundingMode::Round => min.round(),
-                                    IntRoundingMode::Ceil => min.ceil(),
-                                    IntRoundingMode::Floor => min.floor(),
-                                    _ => {
-                                        unreachable!();
-                                    }
-                                };
-                                *x = val as $t;
-                            }
-                        }
-                    }
-                });
-                return Ok(());
-            }};
+                    (None, None) => {}
+                }
+            };
         }
 
         match tensor {
-            TensorViewMut::BF16(t) => halfed_clamp!(t, half::bf16),
-            TensorViewMut::F16(t) => halfed_clamp!(t, half::f16),
-            TensorViewMut::F32(t) => {
-                let (mn, mx) = check_overflow!(f32);
-                t.map_inplace(|x| {
-                    let x64 = *x as f64;
-                    if let Some(min) = mn
-                        && x64 < min
-                    {
-                        *x = min as f32;
-                    }
-                    if let Some(max) = mx
-                        && x64 > max
-                    {
-                        *x = max as f32;
-                    }
-                });
-            }
-            TensorViewMut::F64(t) => {
-                t.map_inplace(|x| {
-                    let x64 = *x;
-                    if let Some(min) = self.min
-                        && x64 < min
-                    {
-                        *x = min;
-                    }
-                    if let Some(max) = self.max
-                        && x64 > max
-                    {
-                        *x = max;
-                    }
-                });
-            }
             TensorViewMut::U8(t) => {
-                int_clamp!(t, u8)
+                let min = self
+                    .min
+                    .map(|x| self.resolve_int(x, u8::MIN, u8::MAX))
+                    .transpose()?;
+
+                let max = self
+                    .max
+                    .map(|x| self.resolve_int(x, u8::MIN, u8::MAX))
+                    .transpose()?;
+
+                match_max_min!(max, min, t);
             }
+
             TensorViewMut::I8(t) => {
-                int_clamp!(t, i8)
+                let min = self
+                    .min
+                    .map(|x| self.resolve_int(x, i8::MIN, i8::MAX))
+                    .transpose()?;
+
+                let max = self
+                    .max
+                    .map(|x| self.resolve_int(x, i8::MIN, i8::MAX))
+                    .transpose()?;
+
+                match_max_min!(max, min, t);
             }
+
             TensorViewMut::I32(t) => {
-                int_clamp!(t, i32)
+                let min = self
+                    .min
+                    .map(|x| self.resolve_int(x, i32::MIN, i32::MAX))
+                    .transpose()?;
+
+                let max = self
+                    .max
+                    .map(|x| self.resolve_int(x, i32::MIN, i32::MAX))
+                    .transpose()?;
+
+                match_max_min!(max, min, t);
             }
+
             TensorViewMut::I64(t) => {
-                int_clamp!(t, i64)
+                let min = self
+                    .min
+                    .map(|x| self.resolve_int(x, i64::MIN, i64::MAX))
+                    .transpose()?;
+
+                let max = self
+                    .max
+                    .map(|x| self.resolve_int(x, i64::MIN, i64::MAX))
+                    .transpose()?;
+
+                match_max_min!(max, min, t);
+            }
+
+            TensorViewMut::F32(t) => {
+                let min = self.min.map(|x| self.resolve_f32(x)).transpose()?;
+
+                let max = self.max.map(|x| self.resolve_f32(x)).transpose()?;
+
+                match_max_min!(max, min, t);
+            }
+
+            TensorViewMut::F64(t) => {
+                let min = self.min.map(|x| self.resolve_f64(x)).transpose()?;
+
+                let max = self.max.map(|x| self.resolve_f64(x)).transpose()?;
+
+                match_max_min!(max, min, t);
+            }
+
+            TensorViewMut::F16(t) => {
+                let min = self.min.map(|x| self.resolve_f16(x)).transpose()?;
+
+                let max = self.max.map(|x| self.resolve_f16(x)).transpose()?;
+
+                match_max_min!(max, min, t);
+            }
+
+            TensorViewMut::BF16(t) => {
+                let min = self.min.map(|x| self.resolve_bf16(x)).transpose()?;
+
+                let max = self.max.map(|x| self.resolve_bf16(x)).transpose()?;
+
+                match_max_min!(max, min, t);
             }
         }
+
         Ok(())
     }
 }
@@ -337,7 +375,7 @@ mod tests {
 
     #[test]
     fn constructor_accepts_valid_bounds() {
-        assert!(Clamp::new(Some(0.0), Some(10.0)).is_ok());
+        assert!(Clamp::new(0.0, 10.0).is_ok());
         assert!(Clamp::new(Some(10.0), Some(10.0)).is_ok());
         assert!(Clamp::new(None::<f64>, Some(10.0)).is_ok());
         assert!(Clamp::new(Some(0.0), None::<f64>).is_ok());
@@ -487,7 +525,12 @@ mod tests {
 
         let result = Clamp::new(Some(min), Some(max)).unwrap().apply(&mut tensor);
 
-        assert!(matches!(result, Err(TransformError::InvalidValue)));
+        assert!(matches!(
+            result,
+            Err(TransformError::ScalarConversion(
+                ScalarConversionError::FractionalValue
+            ))
+        ));
     }
 
     // ---------------------------------------------------------
@@ -565,7 +608,12 @@ mod tests {
                 .unwrap()
                 .apply(&mut tensor);
 
-            assert!(matches!(result, Err(TransformError::InvalidValue)));
+            assert!(matches!(
+                result,
+                Err(TransformError::ScalarConversion(
+                    ScalarConversionError::Overflow
+                ))
+            ));
         }
 
         assert_eq!(data, vec![0, 10, 100]);
@@ -638,7 +686,12 @@ mod tests {
                 .unwrap()
                 .apply(&mut tensor);
 
-            assert!(matches!(result, Err(TransformError::InvalidValue)));
+            assert!(matches!(
+                result,
+                Err(TransformError::ScalarConversion(
+                    ScalarConversionError::Overflow
+                ))
+            ));
         }
 
         assert_eq!(data, original);

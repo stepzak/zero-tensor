@@ -1,5 +1,5 @@
-use super::{Transform, TransformError, helpers::is_float_int};
-use crate::core::dataset::item::TensorViewMut;
+use super::{Scalar, Transform, TransformError};
+use crate::{core::dataset::item::TensorViewMut, transform::ScalarConversionError};
 
 pub enum OverflowMode {
     Error,
@@ -7,14 +7,14 @@ pub enum OverflowMode {
 }
 
 pub struct Add {
-    value: f64,
+    value: Scalar,
     overflow: OverflowMode,
 }
 
 impl Add {
-    pub fn new(value: f64) -> Self {
+    pub fn new<T: Into<Scalar>>(value: T) -> Self {
         Self {
-            value,
+            value: value.into(),
             overflow: OverflowMode::Error,
         }
     }
@@ -28,58 +28,75 @@ impl Transform for Add {
     type Error = TransformError;
 
     fn apply(&self, tensor: &mut TensorViewMut) -> Result<(), Self::Error> {
-        macro_rules! int_add {
-            ($t:ty, $value:expr, $tensor:expr, $overflow:expr) => {{
-                if !$value.is_finite() {
-                    return Err(TransformError::InvalidValue);
-                }
-
-                if !is_float_int($value) {
-                    return Err(TransformError::InvalidValue);
-                }
-                if $value < <$t>::MIN as f64 || $value > <$t>::MAX as f64 {
-                    println!("It is cast overflow");
-                    return Err(TransformError::Overflow);
-                }
-
-                let v = $value as $t;
-                if matches!($overflow, OverflowMode::Wrapping) {
-                    $tensor.map_inplace(|x| *x = x.wrapping_add(v));
-                } else {
-                    for x in $tensor.iter() {
-                        println!("{:?}, {}, {}", x.checked_add(v), x, v);
-                        x.checked_add(v).ok_or(TransformError::Overflow)?;
-                    }
-
-                    $tensor.map_inplace(|x| *x = unsafe { x.unchecked_add(v) });
-                }
-                Ok(())
-            }};
-        }
-        if self.value == 0.0 {
+        if let Ok(u) = <Scalar as TryInto<u8>>::try_into(self.value)
+            && u == 0
+        {
             return Ok(());
         }
+
+        macro_rules! add_int {
+            ($ty:ty, $t:expr) => {{
+                let h: $ty = self.value.try_into()?;
+
+                if matches!(self.overflow, OverflowMode::Error) {
+                    for x in $t.iter() {
+                        x.checked_add(h).ok_or(TransformError::Overflow)?;
+                    }
+                    $t.map_inplace(|x| *x = unsafe { x.unchecked_add(h) });
+                } else {
+                    $t.map_inplace(|x| *x = x.wrapping_add(h));
+                }
+            }};
+        }
+
+        macro_rules! add {
+            ($ty:ty, $t:expr) => {{
+                let h: $ty = self.value.try_into()?;
+                $t.map_inplace(|x| *x += h);
+            }};
+        }
+
         match tensor {
-            TensorViewMut::BF16(t) => {
-                t.map_inplace(|x| *x += half::bf16::from_f64(self.value));
+            TensorViewMut::BF16(t) => add!(half::bf16, t),
+            TensorViewMut::F16(t) => add!(half::f16, t),
+            TensorViewMut::U8(t) => {
+                let val: i32 = self.value.try_into()?;
+                if val < -(u8::MAX as i32) || val > (u8::MAX as i32) {
+                    return Err(ScalarConversionError::Overflow.into());
+                }
+                if val < 0 {
+                    let v = (-val) as u8;
+                    match self.overflow {
+                        OverflowMode::Error => {
+                            for x in t.iter() {
+                                x.checked_sub(v).ok_or(TransformError::Overflow)?;
+                            }
+                            t.map_inplace(|x| *x = unsafe { x.unchecked_sub(v) });
+                        }
+                        OverflowMode::Wrapping => {
+                            t.map_inplace(|x| *x = x.wrapping_sub(v));
+                        }
+                    }
+                } else {
+                    let v = val as u8;
+                    match self.overflow {
+                        OverflowMode::Error => {
+                            for x in t.iter() {
+                                x.checked_add(v).ok_or(TransformError::Overflow)?;
+                            }
+                            t.map_inplace(|x| *x = unsafe { x.unchecked_add(v) });
+                        }
+                        OverflowMode::Wrapping => {
+                            t.map_inplace(|x| *x = x.wrapping_add(v));
+                        }
+                    }
+                }
             }
-            TensorViewMut::F32(t) => {
-                t.map_inplace(|x| *x += self.value as f32);
-            }
-            TensorViewMut::F64(t) => {
-                t.map_inplace(|x| *x += self.value);
-            }
-            TensorViewMut::U8(tens) => return int_add!(u8, self.value, tens, self.overflow),
-            TensorViewMut::F16(t) => {
-                t.map_inplace(|x| *x += half::f16::from_f64(self.value));
-            }
-            TensorViewMut::I8(tens) => return int_add!(i8, self.value, tens, self.overflow),
-            TensorViewMut::I32(tens) => {
-                return int_add!(i32, self.value, tens, self.overflow);
-            }
-            TensorViewMut::I64(tens) => {
-                return int_add!(i64, self.value, tens, self.overflow);
-            }
+            TensorViewMut::I8(t) => add_int!(i8, t),
+            TensorViewMut::I32(t) => add_int!(i32, t),
+            TensorViewMut::I64(t) => add_int!(i64, t),
+            TensorViewMut::F32(t) => add!(f32, t),
+            TensorViewMut::F64(t) => add!(f64, t),
         }
         Ok(())
     }
@@ -292,7 +309,12 @@ mod tests {
 
             let result = Add::new(value).apply(&mut tensor);
 
-            assert!(matches!(result, Err(TransformError::InvalidValue)));
+            assert!(matches!(
+                result,
+                Err(TransformError::ScalarConversion(
+                    ScalarConversionError::InvalidValue
+                ))
+            ));
         }
 
         assert_eq!(data, vec![1, 2, 3]);
@@ -308,7 +330,12 @@ mod tests {
 
             let result = Add::new(1.5).apply(&mut tensor);
 
-            assert!(matches!(result, Err(TransformError::InvalidValue)));
+            assert!(matches!(
+                result,
+                Err(TransformError::ScalarConversion(
+                    ScalarConversionError::FractionalValue
+                ))
+            ));
         }
 
         assert_eq!(data, original);
@@ -326,28 +353,31 @@ mod tests {
         {
             let mut tensor = make_tensor_u8(&mut data);
 
-            let result = Add::new(256.0).apply(&mut tensor);
+            let result = Add::new(256).apply(&mut tensor);
 
-            assert!(matches!(result, Err(TransformError::Overflow)));
+            assert!(matches!(
+                result,
+                Err(TransformError::ScalarConversion(
+                    ScalarConversionError::Overflow
+                ))
+            ));
         }
 
         assert_eq!(data, original);
     }
 
     #[test]
-    fn add_negative_value_outside_u8_range() {
+    fn add_negative_value_u8() {
         let mut data = vec![1u8, 2, 3];
-        let original = data.clone();
-
+        let exp: Vec<u8> = data.iter().map(|&x| x - 1).collect();
         {
             let mut tensor = make_tensor_u8(&mut data);
 
-            let result = Add::new(-1.0).apply(&mut tensor);
-
-            assert!(matches!(result, Err(TransformError::Overflow)));
+            let result = Add::new(-1).apply(&mut tensor);
+            assert!(result.is_ok());
         }
 
-        assert_eq!(data, original);
+        assert_eq!(data, exp);
     }
 
     // ------------------------------------------------------------
@@ -484,5 +514,18 @@ mod tests {
         }
 
         assert_eq!(data, vec![-127]);
+    }
+
+    #[test]
+    fn test_atomic_overflow() {
+        let mut data = vec![1i8, 2, 127, 4];
+        let original = data.clone();
+
+        let mut tensor = make_tensor_i8(&mut data);
+
+        let result = Add::new(1i8).apply(&mut tensor);
+
+        assert!(matches!(result, Err(TransformError::Overflow)));
+        assert_eq!(data, original);
     }
 }
