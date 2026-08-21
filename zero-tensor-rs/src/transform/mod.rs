@@ -10,7 +10,7 @@ use crate::core::dataset::item::TensorViewMut;
 pub use add::Add;
 pub use clamp::Clamp;
 pub use error::{ScalarConversionError, TransformError};
-pub use scalar::Scalar;
+pub use scalar::{IntoScalarOption, Scalar};
 pub use scale::Scale;
 
 pub trait Transform {
