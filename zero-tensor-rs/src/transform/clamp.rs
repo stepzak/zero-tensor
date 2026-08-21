@@ -1,3 +1,5 @@
+use crate::transform::{Scalar, scalar::IntoScalarOption};
+
 use super::{TensorViewMut, Transform, TransformError, helpers::is_float_int};
 
 pub enum IntRoundingMode {
@@ -24,7 +26,7 @@ impl Clamp {
         let min = min.into();
         let max = max.into();
 
-        if min.is_some_and(f64::is_nan) || max.is_some_and(f64::is_nan) {
+        if min.is_some_and(|x| x.is_nan()) || max.is_some_and(|x| x.is_nan()) {
             return Err(TransformError::InvalidValue);
         }
         if let (Some(mx), Some(mn)) = (max, min) {
@@ -337,7 +339,7 @@ mod tests {
 
     #[test]
     fn constructor_accepts_valid_bounds() {
-        assert!(Clamp::new(Some(0.0), Some(10.0)).is_ok());
+        assert!(Clamp::new(0.0, 10.0).is_ok());
         assert!(Clamp::new(Some(10.0), Some(10.0)).is_ok());
         assert!(Clamp::new(None::<f64>, Some(10.0)).is_ok());
         assert!(Clamp::new(Some(0.0), None::<f64>).is_ok());

@@ -1,3 +1,5 @@
+use std::ops::{Neg, Not};
+
 use super::Scalar;
 
 macro_rules! promote_types {
@@ -54,6 +56,40 @@ macro_rules! promote_types {
             (a, b)                              => Scalar::F32(a.to_f32_lossy() $op b.to_f32_lossy()),
         }
     };
+}
+
+impl Neg for Scalar {
+    type Output = Self;
+
+    fn neg(self) -> Self::Output {
+        match self {
+            Scalar::U8(val) => Scalar::I32(-(val as i32)),
+
+            Scalar::I8(val) => Scalar::I8(-val),
+            Scalar::I32(val) => Scalar::I32(-val),
+            Scalar::I64(val) => Scalar::I64(-val),
+            Scalar::F32(val) => Scalar::F32(-val),
+            Scalar::F64(val) => Scalar::F64(-val),
+
+            Scalar::BF16(val) => Scalar::BF16(half::bf16::from_f32(-val.to_f32())),
+            Scalar::F16(val) => Scalar::F16(half::f16::from_f32(-val.to_f32())),
+        }
+    }
+}
+
+impl Not for Scalar {
+    type Output = Self;
+
+    fn not(self) -> Self::Output {
+        match self {
+            Scalar::U8(val) => Scalar::U8(!val),
+            Scalar::I8(val) => Scalar::I8(!val),
+            Scalar::I32(val) => Scalar::I32(!val),
+            Scalar::I64(val) => Scalar::I64(!val),
+
+            float_scalar => float_scalar,
+        }
+    }
 }
 
 macro_rules! generate_math_ops {
@@ -376,5 +412,119 @@ mod tests {
             Scalar::I32(3) * Scalar::F32(2.5),
             Scalar::F32(x) if x == 7.5
         ));
+    }
+
+    #[test]
+    fn neg_u8_promotes_to_i32() {
+        assert_eq!(-Scalar::U8(42), Scalar::I32(-42));
+
+        assert_eq!(-Scalar::U8(0), Scalar::I32(0));
+
+        assert_eq!(-Scalar::U8(u8::MAX), Scalar::I32(-(u8::MAX as i32)));
+    }
+
+    #[test]
+    fn neg_signed_integers() {
+        assert_eq!(-Scalar::I8(42), Scalar::I8(-42));
+
+        assert_eq!(-Scalar::I32(-42), Scalar::I32(42));
+
+        assert_eq!(-Scalar::I64(1_000_000), Scalar::I64(-1_000_000));
+    }
+
+    #[test]
+    fn neg_floats() {
+        assert_eq!(-Scalar::F32(1.5), Scalar::F32(-1.5));
+
+        assert_eq!(-Scalar::F64(-42.25), Scalar::F64(42.25));
+    }
+
+    #[test]
+    fn neg_half_floats() {
+        let bf16 = Scalar::BF16(half::bf16::from_f32(1.5));
+        let f16 = Scalar::F16(half::f16::from_f32(-2.25));
+
+        assert_eq!(-bf16, Scalar::BF16(half::bf16::from_f32(-1.5)));
+
+        assert_eq!(-f16, Scalar::F16(half::f16::from_f32(2.25)));
+    }
+
+    #[test]
+    fn neg_negative_zero() {
+        let result = -Scalar::F32(0.0);
+
+        match result {
+            Scalar::F32(value) => {
+                assert_eq!(value, 0.0);
+                assert!(value.is_sign_negative());
+            }
+            _ => panic!("expected Scalar::F32"),
+        }
+    }
+
+    #[test]
+    fn not_u8() {
+        assert_eq!(!Scalar::U8(0b0000_1111), Scalar::U8(0b1111_0000));
+
+        assert_eq!(!Scalar::U8(0), Scalar::U8(u8::MAX));
+
+        assert_eq!(!Scalar::U8(u8::MAX), Scalar::U8(0));
+    }
+
+    #[test]
+    fn not_i8() {
+        assert_eq!(!Scalar::I8(0), Scalar::I8(!0i8));
+
+        assert_eq!(!Scalar::I8(42), Scalar::I8(!42i8));
+
+        assert_eq!(!Scalar::I8(-1), Scalar::I8(!-1i8));
+    }
+
+    #[test]
+    fn not_i32() {
+        assert_eq!(!Scalar::I32(0), Scalar::I32(!0i32));
+
+        assert_eq!(!Scalar::I32(0x0F0F_0F0F), Scalar::I32(!0x0F0F_0F0Fi32));
+    }
+
+    #[test]
+    fn not_i64() {
+        assert_eq!(!Scalar::I64(0), Scalar::I64(!0i64));
+
+        assert_eq!(!Scalar::I64(42), Scalar::I64(!42i64));
+
+        assert_eq!(!Scalar::I64(-1), Scalar::I64(!-1i64));
+    }
+
+    #[test]
+    fn not_floats_are_identity() {
+        assert_eq!(!Scalar::F32(1.5), Scalar::F32(1.5));
+
+        assert_eq!(!Scalar::F64(-42.25), Scalar::F64(-42.25));
+    }
+
+    #[test]
+    fn not_half_floats_are_identity() {
+        let bf16 = half::bf16::from_f32(1.5);
+        let f16 = half::f16::from_f32(-2.25);
+
+        assert_eq!(!Scalar::BF16(bf16), Scalar::BF16(bf16));
+
+        assert_eq!(!Scalar::F16(f16), Scalar::F16(f16));
+    }
+
+    #[test]
+    fn not_integers_is_involution() {
+        let u8_value = Scalar::U8(42);
+        assert_eq!(!(!u8_value), Scalar::U8(42));
+
+        let i8_value = Scalar::I8(-42);
+        assert_eq!(!(!i8_value), Scalar::I8(-42));
+
+        let i32_value = Scalar::I32(123_456);
+        assert_eq!(!(!i32_value), Scalar::I32(123_456));
+
+        let i64_value = Scalar::I64(-987_654_321);
+        assert_eq!(!(!i64_value), Scalar::I64(-987_654_321));
     }
 }

@@ -38,10 +38,19 @@ mod tests {
 
     #[test]
     fn same_integer_types() {
-        assert_eq!(Scalar::U8(1).partial_cmp(&Scalar::U8(2)), Some(Ordering::Less));
-        assert_eq!(Scalar::I8(2).partial_cmp(&Scalar::I8(1)), Some(Ordering::Greater));
+        assert_eq!(
+            Scalar::U8(1).partial_cmp(&Scalar::U8(2)),
+            Some(Ordering::Less)
+        );
+        assert_eq!(
+            Scalar::I8(2).partial_cmp(&Scalar::I8(1)),
+            Some(Ordering::Greater)
+        );
         assert_eq!(Scalar::I32(42), Scalar::I32(42));
-        assert_eq!(Scalar::I64(-10).partial_cmp(&Scalar::I64(-5)), Some(Ordering::Less));
+        assert_eq!(
+            Scalar::I64(-10).partial_cmp(&Scalar::I64(-5)),
+            Some(Ordering::Less)
+        );
     }
 
     #[test]
@@ -69,10 +78,16 @@ mod tests {
     #[test]
     fn mixed_integer_types() {
         assert_eq!(Scalar::U8(42), Scalar::I8(42));
-        assert_eq!(Scalar::I8(-1).partial_cmp(&Scalar::U8(1)), Some(Ordering::Less));
+        assert_eq!(
+            Scalar::I8(-1).partial_cmp(&Scalar::U8(1)),
+            Some(Ordering::Less)
+        );
 
         assert_eq!(Scalar::U8(42), Scalar::I32(42));
-        assert_eq!(Scalar::I32(-10).partial_cmp(&Scalar::U8(0)), Some(Ordering::Less));
+        assert_eq!(
+            Scalar::I32(-10).partial_cmp(&Scalar::U8(0)),
+            Some(Ordering::Less)
+        );
 
         assert_eq!(Scalar::I32(100), Scalar::I64(100));
         assert!(Scalar::I64(101) > Scalar::I32(100));
@@ -119,15 +134,9 @@ mod tests {
         assert_eq!(Scalar::F64(42.0), Scalar::I32(42));
         assert_eq!(Scalar::F64(42.0), Scalar::I64(42));
 
-        assert_eq!(
-            Scalar::F64(1.5),
-            Scalar::F16(half::f16::from_f32(1.5))
-        );
+        assert_eq!(Scalar::F64(1.5), Scalar::F16(half::f16::from_f32(1.5)));
 
-        assert_eq!(
-            Scalar::F64(1.5),
-            Scalar::BF16(half::bf16::from_f32(1.5))
-        );
+        assert_eq!(Scalar::F64(1.5), Scalar::BF16(half::bf16::from_f32(1.5)));
     }
 
     #[test]
@@ -177,15 +186,9 @@ mod tests {
         assert!(Scalar::F32(f32::INFINITY) > Scalar::F32(1.0));
         assert!(Scalar::F64(f64::NEG_INFINITY) < Scalar::I32(0));
 
-        assert_eq!(
-            Scalar::F32(f32::INFINITY),
-            Scalar::F64(f64::INFINITY)
-        );
+        assert_eq!(Scalar::F32(f32::INFINITY), Scalar::F64(f64::INFINITY));
 
-        assert!(
-            Scalar::F64(f64::NEG_INFINITY)
-                < Scalar::F16(half::f16::from_f32(-100.0))
-        );
+        assert!(Scalar::F64(f64::NEG_INFINITY) < Scalar::F16(half::f16::from_f32(-100.0)));
     }
 
     #[test]

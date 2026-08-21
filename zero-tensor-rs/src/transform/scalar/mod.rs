@@ -14,6 +14,10 @@ pub enum Scalar {
     F64(f64),
 }
 
+pub trait IntoScalarOption {
+    fn into_scalar_option(self) -> Option<Scalar>;
+}
+
 macro_rules! int_to_int {
     ($value:expr, $target:ty) => {{
         if $value as i128 > <$target>::MAX as i128 || ($value as i128) < <$target>::MIN as i128 {
@@ -65,6 +69,18 @@ macro_rules! impl_from {
         impl From<$ty> for Scalar {
             fn from(value: $ty) -> Self {
                 Self::$variant(value)
+            }
+        }
+
+        impl IntoScalarOption for $ty {
+            fn into_scalar_option(self) -> Option<Scalar> {
+                Some(Scalar::$variant(self))
+            }
+        }
+
+        impl IntoScalarOption for Option<$ty> {
+            fn into_scalar_option(self) -> Option<Scalar> {
+                self.map(Scalar::$variant)
             }
         }
     };

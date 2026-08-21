@@ -420,3 +420,91 @@ fn infinity_to_f16() {
     assert!(result.is_ok());
     assert!(result.unwrap().is_infinite());
 }
+
+#[test]
+fn into_scalar_option_for_values() {
+    assert_eq!(42u8.into_scalar_option(), Some(Scalar::U8(42)));
+
+    assert_eq!((-42i8).into_scalar_option(), Some(Scalar::I8(-42)));
+
+    assert_eq!(12345i32.into_scalar_option(), Some(Scalar::I32(12345)));
+
+    assert_eq!(
+        (-999_999i64).into_scalar_option(),
+        Some(Scalar::I64(-999_999))
+    );
+
+    assert_eq!(
+        half::bf16::from_f32(1.5).into_scalar_option(),
+        Some(Scalar::BF16(half::bf16::from_f32(1.5)))
+    );
+
+    assert_eq!(
+        half::f16::from_f32(-2.25).into_scalar_option(),
+        Some(Scalar::F16(half::f16::from_f32(-2.25)))
+    );
+
+    assert_eq!(3.5f32.into_scalar_option(), Some(Scalar::F32(3.5)));
+
+    assert_eq!((-7.25f64).into_scalar_option(), Some(Scalar::F64(-7.25)));
+}
+
+#[test]
+fn into_scalar_option_for_some_values() {
+    let value: Option<u8> = Some(42);
+    assert_eq!(value.into_scalar_option(), Some(Scalar::U8(42)));
+
+    let value: Option<i8> = Some(-42);
+    assert_eq!(value.into_scalar_option(), Some(Scalar::I8(-42)));
+
+    let value: Option<i32> = Some(12345);
+    assert_eq!(value.into_scalar_option(), Some(Scalar::I32(12345)));
+
+    let value: Option<i64> = Some(-999_999);
+    assert_eq!(value.into_scalar_option(), Some(Scalar::I64(-999_999)));
+
+    let value: Option<half::bf16> = Some(half::bf16::from_f32(1.5));
+    assert_eq!(
+        value.into_scalar_option(),
+        Some(Scalar::BF16(half::bf16::from_f32(1.5)))
+    );
+
+    let value: Option<half::f16> = Some(half::f16::from_f32(-2.25));
+    assert_eq!(
+        value.into_scalar_option(),
+        Some(Scalar::F16(half::f16::from_f32(-2.25)))
+    );
+
+    let value: Option<f32> = Some(3.5);
+    assert_eq!(value.into_scalar_option(), Some(Scalar::F32(3.5)));
+
+    let value: Option<f64> = Some(-7.25);
+    assert_eq!(value.into_scalar_option(), Some(Scalar::F64(-7.25)));
+}
+
+#[test]
+fn into_scalar_option_for_none() {
+    let value: Option<u8> = None;
+    assert_eq!(value.into_scalar_option(), None);
+
+    let value: Option<i8> = None;
+    assert_eq!(value.into_scalar_option(), None);
+
+    let value: Option<i32> = None;
+    assert_eq!(value.into_scalar_option(), None);
+
+    let value: Option<i64> = None;
+    assert_eq!(value.into_scalar_option(), None);
+
+    let value: Option<half::bf16> = None;
+    assert_eq!(value.into_scalar_option(), None);
+
+    let value: Option<half::f16> = None;
+    assert_eq!(value.into_scalar_option(), None);
+
+    let value: Option<f32> = None;
+    assert_eq!(value.into_scalar_option(), None);
+
+    let value: Option<f64> = None;
+    assert_eq!(value.into_scalar_option(), None);
+}
