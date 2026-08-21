@@ -23,7 +23,7 @@ impl Transform for Standardize {
             ($ty:ty, $t:expr) => {{
                 let mean: $ty = self.mean.try_into()?;
                 let std: $ty = self.std.try_into()?;
-                if std.is_zero() {
+                if std.eq_zero() {
                     return Err(TransformError::InvalidValue);
                 }
                 $t.map_inplace(|x| *x = (*x - mean) / std);
