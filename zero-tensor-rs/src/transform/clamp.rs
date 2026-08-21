@@ -29,14 +29,14 @@ impl Clamp {
         if min.is_some_and(|x| x.is_nan()) || max.is_some_and(|x| x.is_nan()) {
             return Err(TransformError::InvalidValue);
         }
-        if let (Some(mx), Some(mn)) = (max, min) {
-            if mx < mn {
-                return Err(TransformError::InvalidValue);
-            }
+        if let (Some(mx), Some(mn)) = (max, min)
+            && mx < mn
+        {
+            return Err(TransformError::InvalidValue);
         }
         Ok(Self {
-            min: min,
-            max: max,
+            min,
+            max,
             int_rounding_mode: IntRoundingMode::Error,
             overflow_mode: OverflowMode::Error,
         })
@@ -57,7 +57,7 @@ impl Clamp {
     }
 
     fn scalar_to_f64(value: Scalar) -> Result<f64, TransformError> {
-        value.clone().try_into().map_err(Into::into)
+        value.try_into().map_err(Into::into)
     }
 
     fn rounded_scalar(&self, value: Scalar) -> Result<Scalar, TransformError> {
@@ -79,7 +79,7 @@ impl Clamp {
     where
         T: TryFrom<Scalar, Error = ScalarConversionError> + Copy + Into<Scalar>,
     {
-        match value.clone().try_into() {
+        match value.try_into() {
             Ok(value) => Ok(value),
 
             Err(ScalarConversionError::FractionalValue) => {
@@ -136,7 +136,7 @@ impl Clamp {
     }
 
     fn resolve_f32(&self, value: Scalar) -> Result<f32, TransformError> {
-        match value.clone().try_into() {
+        match value.try_into() {
             Ok(value) => Ok(value),
 
             Err(ScalarConversionError::Overflow) => match self.overflow_mode {
@@ -157,11 +157,11 @@ impl Clamp {
     }
 
     fn resolve_f64(&self, value: Scalar) -> Result<f64, TransformError> {
-        Ok(value.clone().try_into()?)
+        Ok(value.try_into()?)
     }
 
     fn resolve_f16(&self, value: Scalar) -> Result<half::f16, TransformError> {
-        match value.clone().try_into() {
+        match value.try_into() {
             Ok(value) => Ok(value),
 
             Err(ScalarConversionError::Overflow) => match self.overflow_mode {
@@ -182,7 +182,7 @@ impl Clamp {
     }
 
     fn resolve_bf16(&self, value: Scalar) -> Result<half::bf16, TransformError> {
-        match value.clone().try_into() {
+        match value.try_into() {
             Ok(value) => Ok(value),
 
             Err(ScalarConversionError::Overflow) => match self.overflow_mode {
