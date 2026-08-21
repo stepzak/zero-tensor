@@ -1,6 +1,8 @@
 #[cfg(test)]
 mod tests;
 
+use crate::pipeline::Pipeline;
+
 use super::{
     buffer::{
         ZTBufErr, ZeroTensorBuffer, control_block::ZeroTensorControlBlock, get_dt_size,
@@ -117,6 +119,7 @@ pub struct ZeroTensorProducerBuilder {
     shuffle: bool,
     seed: Option<u64>,
     max_steps: Option<usize>,
+    pipeline: Pipeline
 }
 
 impl ZeroTensorProducerBuilder {
