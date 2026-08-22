@@ -76,11 +76,12 @@ impl TensorBatchLayout {
         self.total_elements() * get_dt_size(self.dt)
     }
 
-    pub fn try_view_mut<'a>(
+    fn try_view_mut_inner<'a>(
         &self,
         raw_bytes: &'a mut [u8],
+        offset: usize
     ) -> Result<TensorViewMut<'a>, TensorViewError> {
-        let layout = IxDyn(&self.shape).strides(IxDyn(self.strides()));
+        let layout = IxDyn(&self.shape[offset..]).strides(IxDyn(&self.strides[offset..]));
 
         match self.dt {
             TensorDT::I8 => {
@@ -131,6 +132,20 @@ impl TensorBatchLayout {
                 Ok(TensorViewMut::F16(view))
             }
         }
+    }
+
+    pub fn try_view_mut<'a>(
+        &self,
+        raw_bytes: &'a mut [u8],
+    ) -> Result<TensorViewMut<'a>, TensorViewError> {
+        self.try_view_mut_inner(raw_bytes, 0)
+    }
+
+    pub fn try_view_item_mut<'a>(
+        &self,
+        raw_bytes: &'a mut [u8],
+    ) -> Result<TensorViewMut<'a>, TensorViewError> {
+        self.try_view_mut_inner(raw_bytes, 1)
     }
 }
 
