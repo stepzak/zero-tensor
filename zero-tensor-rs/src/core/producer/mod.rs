@@ -1,7 +1,10 @@
 #[cfg(test)]
 mod tests;
 
-use crate::pipeline::Pipeline;
+use crate::{
+    core::dataset::item::{TensorBatchLayout, TensorViewError},
+    pipeline::{Pipeline, PipelineError},
+};
 
 use super::{
     buffer::{
@@ -75,6 +78,7 @@ pub struct ZeroTensorProducer {
     shuffle: bool,
     seed: Option<u64>,
     max_steps: Option<usize>,
+    pipeline: Option<Pipeline>,
 }
 
 #[derive(Debug, Error)]
@@ -103,9 +107,15 @@ pub enum ZTProducerErr<E: ZTDatasetError + 'static> {
 
     #[error("{0}")]
     ProtocolError(String),
+
+    #[error("Pipeline error {0}")]
+    PipelineError(#[from] PipelineError),
+
+    #[error("Tensor View conv error {0}")]
+    TensorViewError(#[from] TensorViewError),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ZeroTensorProducerBuilder {
     // Required
     slot_size: u64,
@@ -119,7 +129,7 @@ pub struct ZeroTensorProducerBuilder {
     shuffle: bool,
     seed: Option<u64>,
     max_steps: Option<usize>,
-    pipeline: Pipeline
+    pipeline: Option<Pipeline>,
 }
 
 impl ZeroTensorProducerBuilder {
@@ -143,6 +153,7 @@ impl ZeroTensorProducerBuilder {
             shuffle: false,
             seed: None,
             max_steps: None,
+            pipeline: None,
         }
     }
 
@@ -180,6 +191,11 @@ impl ZeroTensorProducerBuilder {
         self
     }
 
+    pub fn pipeline(mut self, pipeline: Pipeline) -> Self {
+        self.pipeline = pipeline.into();
+        self
+    }
+
     pub fn build(self) -> Result<ZeroTensorProducer, ZTProducerNewErr> {
         let running = Arc::new(AtomicBool::new(true));
         let rclone = running.clone();
@@ -211,6 +227,7 @@ impl ZeroTensorProducerBuilder {
             shuffle: self.shuffle,
             seed: self.seed,
             max_steps: self.max_steps,
+            pipeline: self.pipeline,
         })
     }
 }
@@ -420,7 +437,7 @@ impl ZeroTensorProducer {
 
             let slot_idx = (cur_head % cb.nslots()) as usize;
             let offset = ZeroTensorControlBlock::slot_offset(slot_idx, cb.slot_size() as usize);
-            let (data_start_offset, total_data_bytes, element_size_bytes) =
+            let (data_start_offset, total_data_bytes, element_size_bytes, layout) =
                 self.prepare_batch_metadata(dataset, batch_indices, offset)?;
             self.copy_batch_to_shm(
                 dataset,
@@ -429,6 +446,7 @@ impl ZeroTensorProducer {
                 data_start_offset,
                 total_data_bytes,
                 element_size_bytes,
+                &layout,
             )?;
             self.buffer.set_slot_ready(offset);
             epoch_step += 1;
@@ -450,13 +468,13 @@ impl ZeroTensorProducer {
         }
     }
 
-    /// Returns: (data_start_offset, total_data_bytes, element_size_bytes)
+    /// Returns: (data_start_offset, total_data_bytes, element_size_bytes, layout)
     fn prepare_batch_metadata<D: ZeroTensorDataset>(
         &mut self,
         dataset: &D,
         batch_indices: &[usize],
         offset: usize,
-    ) -> Result<(usize, usize, usize), ZTProducerErr<D::Error>> {
+    ) -> Result<(usize, usize, usize, TensorBatchLayout), ZTProducerErr<D::Error>> {
         let current_batch_size = batch_indices.len();
 
         let layout =
@@ -497,7 +515,7 @@ impl ZeroTensorProducer {
 
         let total_data_bytes = current_batch_size * element_size_bytes;
 
-        Ok((offs.data(), total_data_bytes, element_size_bytes))
+        Ok((offs.data(), total_data_bytes, element_size_bytes, layout))
     }
 
     fn copy_batch_to_shm<D: ZeroTensorDataset>(
@@ -508,6 +526,7 @@ impl ZeroTensorProducer {
         data_start_offset: usize,
         total_data_bytes: usize,
         element_size_bytes: usize,
+        layout: &TensorBatchLayout,
     ) -> Result<(), ZTProducerErr<D::Error>> {
         let raw_shm_slice = unsafe {
             self.buffer
@@ -528,6 +547,11 @@ impl ZeroTensorProducer {
                         idx: Some(i),
                         source: e,
                     })?;
+
+                if let Some(p) = &self.pipeline {
+                    let mut view = layout.try_view_item_mut(shm_chunk)?;
+                    p.exec(&mut view)?;
+                }
             }
         } else {
             raw_shm_slice
@@ -546,6 +570,11 @@ impl ZeroTensorProducer {
 
                     if !self.running.load(Ordering::SeqCst) {
                         return Err(io::Error::from(io::ErrorKind::Interrupted).into());
+                    }
+
+                    if let Some(p) = &self.pipeline {
+                        let mut view = layout.try_view_item_mut(shm_chunk)?;
+                        p.exec(&mut view)?;
                     }
 
                     Ok(())

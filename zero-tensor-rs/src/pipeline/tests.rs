@@ -1,6 +1,7 @@
 use super::*;
 use crate::{
-    core::dataset::item::{TensorBatchLayout, TensorDT}, transform::{Scale, TransformError},
+    core::dataset::item::{TensorBatchLayout, TensorDT},
+    transform::{Scale, TransformError},
 };
 use std::sync::{
     Arc,
@@ -133,17 +134,11 @@ fn applies_real_transforms_in_order() {
     let data = vec![1.0f32, 2.0, 3.0];
     let mut raw_bytes = bytemuck::pod_collect_to_vec(&data);
 
-    let layout = TensorBatchLayout::new(
-        vec![3].into(),
-        vec![1].into(),
-        TensorDT::F32,
-    );
+    let layout = TensorBatchLayout::new(vec![3].into(), vec![1].into(), TensorDT::F32);
 
     let mut tensor = layout.try_view_mut(&mut raw_bytes).unwrap();
 
-    let pipeline = Pipeline::new()
-        .then(Scale::new(2.0))
-        .then(Scale::new(3.0));
+    let pipeline = Pipeline::new().then(Scale::new(2.0)).then(Scale::new(3.0));
 
     pipeline.exec(&mut tensor).unwrap();
 

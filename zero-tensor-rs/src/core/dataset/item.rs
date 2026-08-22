@@ -79,7 +79,7 @@ impl TensorBatchLayout {
     fn try_view_mut_inner<'a>(
         &self,
         raw_bytes: &'a mut [u8],
-        offset: usize
+        offset: usize,
     ) -> Result<TensorViewMut<'a>, TensorViewError> {
         let layout = IxDyn(&self.shape[offset..]).strides(IxDyn(&self.strides[offset..]));
 
