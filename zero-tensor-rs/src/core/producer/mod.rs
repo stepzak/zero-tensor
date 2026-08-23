@@ -1,6 +1,11 @@
 #[cfg(test)]
 mod tests;
 
+use crate::{
+    core::dataset::item::{TensorBatchLayout, TensorViewError},
+    pipeline::{Pipeline, PipelineError},
+};
+
 use super::{
     buffer::{
         ZTBufErr, ZeroTensorBuffer, control_block::ZeroTensorControlBlock, get_dt_size,
@@ -64,6 +69,12 @@ enum ZTProducerCmd {
     EpochEnd,
 }
 
+struct CopyCtx {
+    pub data_start_offset: usize,
+    pub total_data_bytes: usize,
+    pub element_size_bytes: usize,
+}
+
 pub struct ZeroTensorProducer {
     buffer: ZeroTensorBuffer,
     listener: UnixListener,
@@ -73,6 +84,7 @@ pub struct ZeroTensorProducer {
     shuffle: bool,
     seed: Option<u64>,
     max_steps: Option<usize>,
+    pipeline: Option<Pipeline>,
 }
 
 #[derive(Debug, Error)]
@@ -101,9 +113,15 @@ pub enum ZTProducerErr<E: ZTDatasetError + 'static> {
 
     #[error("{0}")]
     ProtocolError(String),
+
+    #[error("Pipeline error {0}")]
+    PipelineError(#[from] PipelineError),
+
+    #[error("Tensor View conv error {0}")]
+    TensorViewError(#[from] TensorViewError),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ZeroTensorProducerBuilder {
     // Required
     slot_size: u64,
@@ -117,6 +135,7 @@ pub struct ZeroTensorProducerBuilder {
     shuffle: bool,
     seed: Option<u64>,
     max_steps: Option<usize>,
+    pipeline: Option<Pipeline>,
 }
 
 impl ZeroTensorProducerBuilder {
@@ -140,6 +159,7 @@ impl ZeroTensorProducerBuilder {
             shuffle: false,
             seed: None,
             max_steps: None,
+            pipeline: None,
         }
     }
 
@@ -177,6 +197,11 @@ impl ZeroTensorProducerBuilder {
         self
     }
 
+    pub fn pipeline(mut self, pipeline: Pipeline) -> Self {
+        self.pipeline = pipeline.into();
+        self
+    }
+
     pub fn build(self) -> Result<ZeroTensorProducer, ZTProducerNewErr> {
         let running = Arc::new(AtomicBool::new(true));
         let rclone = running.clone();
@@ -208,6 +233,7 @@ impl ZeroTensorProducerBuilder {
             shuffle: self.shuffle,
             seed: self.seed,
             max_steps: self.max_steps,
+            pipeline: self.pipeline,
         })
     }
 }
@@ -417,16 +443,14 @@ impl ZeroTensorProducer {
 
             let slot_idx = (cur_head % cb.nslots()) as usize;
             let offset = ZeroTensorControlBlock::slot_offset(slot_idx, cb.slot_size() as usize);
-            let (data_start_offset, total_data_bytes, element_size_bytes) =
+            let (data_start_offset, total_data_bytes, element_size_bytes, layout) =
                 self.prepare_batch_metadata(dataset, batch_indices, offset)?;
-            self.copy_batch_to_shm(
-                dataset,
-                batch_indices,
-                offset,
+            let ctx = CopyCtx {
                 data_start_offset,
                 total_data_bytes,
                 element_size_bytes,
-            )?;
+            };
+            self.copy_batch_to_shm(dataset, batch_indices, offset, ctx, &layout)?;
             self.buffer.set_slot_ready(offset);
             epoch_step += 1;
         }
@@ -447,13 +471,13 @@ impl ZeroTensorProducer {
         }
     }
 
-    /// Returns: (data_start_offset, total_data_bytes, element_size_bytes)
+    /// Returns: (data_start_offset, total_data_bytes, element_size_bytes, layout)
     fn prepare_batch_metadata<D: ZeroTensorDataset>(
         &mut self,
         dataset: &D,
         batch_indices: &[usize],
         offset: usize,
-    ) -> Result<(usize, usize, usize), ZTProducerErr<D::Error>> {
+    ) -> Result<(usize, usize, usize, TensorBatchLayout), ZTProducerErr<D::Error>> {
         let current_batch_size = batch_indices.len();
 
         let layout =
@@ -479,12 +503,10 @@ impl ZeroTensorProducer {
         let element_size_bytes = layout.total_elements() * get_dt_size(dt);
 
         let mut batch_strides = StrideVec::with_capacity(ndims);
-
+        batch_strides.push(layout.total_elements());
         for &s in layout.strides() {
             batch_strides.push(s);
         }
-
-        batch_strides.push(1);
 
         let header_meta = TensorHeader::new(dt, ndims as u8);
         let offs = header_meta.get_offsets();
@@ -493,8 +515,53 @@ impl ZeroTensorProducer {
             .write_tensor(offset, &batch_shape, &batch_strides, dt, &[])?;
 
         let total_data_bytes = current_batch_size * element_size_bytes;
+        Ok((offs.data(), total_data_bytes, element_size_bytes, layout))
+    }
 
-        Ok((offs.data(), total_data_bytes, element_size_bytes))
+    fn check_running(running: &Arc<AtomicBool>) -> Result<(), io::Error> {
+        if !running.load(Ordering::SeqCst) {
+            return Err(io::Error::from(io::ErrorKind::Interrupted));
+        }
+        Ok(())
+    }
+
+    fn process_chunk<D: ZeroTensorDataset>(
+        running: &Arc<AtomicBool>,
+        pipeline: &Option<Pipeline>,
+        shm_chunk: &mut [u8],
+        dataset: &D,
+        i: usize,
+        layout: &TensorBatchLayout,
+        atomic: bool,
+    ) -> Result<(), ZTProducerErr<D::Error>> {
+        if atomic {
+            Self::check_running(running)?;
+        }
+        let l = shm_chunk.len();
+        let written =
+            dataset
+                .write_item_into(i, shm_chunk)
+                .map_err(|e| ZTProducerErr::DatasetError {
+                    idx: Some(i),
+                    source: e,
+                })?;
+        if atomic {
+            Self::check_running(running)?;
+        }
+        if written > l {
+            return Err(ZTProducerErr::ProtocolError(format!(
+                "Dataset has written {written} but chunk size was only {} as index {i}",
+                shm_chunk.len()
+            )));
+        }
+        if written < shm_chunk.len() {
+            shm_chunk[written..].fill(0);
+        }
+        if let Some(p) = &pipeline {
+            let mut view = layout.try_view_mut(shm_chunk)?;
+            p.exec(&mut view)?;
+        }
+        Ok(())
     }
 
     fn copy_batch_to_shm<D: ZeroTensorDataset>(
@@ -502,50 +569,50 @@ impl ZeroTensorProducer {
         dataset: &D,
         batch_indices: &[usize],
         offset: usize,
-        data_start_offset: usize,
-        total_data_bytes: usize,
-        element_size_bytes: usize,
+        ctx: CopyCtx,
+        layout: &TensorBatchLayout,
     ) -> Result<(), ZTProducerErr<D::Error>> {
+        let CopyCtx {
+            element_size_bytes,
+            total_data_bytes,
+            data_start_offset,
+        } = ctx;
         let raw_shm_slice = unsafe {
             self.buffer
                 .get_item_slice_mut(offset, data_start_offset, total_data_bytes)
         }?;
 
-        raw_shm_slice.fill(0);
         const RAYON_THRESHOLD: usize = 256 * 1024;
 
-        if element_size_bytes < RAYON_THRESHOLD {
+        if total_data_bytes < RAYON_THRESHOLD {
             for (shm_chunk, &i) in raw_shm_slice
                 .chunks_mut(element_size_bytes)
                 .zip(batch_indices)
             {
-                dataset
-                    .write_item_into(i, shm_chunk)
-                    .map_err(|e| ZTProducerErr::DatasetError {
-                        idx: Some(i),
-                        source: e,
-                    })?;
+                Self::process_chunk(
+                    &self.running,
+                    &self.pipeline,
+                    shm_chunk,
+                    dataset,
+                    i,
+                    layout,
+                    false,
+                )?;
             }
         } else {
             raw_shm_slice
                 .par_chunks_mut(element_size_bytes)
                 .zip(batch_indices)
                 .try_for_each(|(shm_chunk, &i)| -> Result<(), ZTProducerErr<D::Error>> {
-                    if !self.running.load(Ordering::SeqCst) {
-                        return Err(io::Error::from(io::ErrorKind::Interrupted).into());
-                    }
-                    dataset.write_item_into(i, shm_chunk).map_err(|e| {
-                        ZTProducerErr::DatasetError {
-                            idx: Some(i),
-                            source: e,
-                        }
-                    })?;
-
-                    if !self.running.load(Ordering::SeqCst) {
-                        return Err(io::Error::from(io::ErrorKind::Interrupted).into());
-                    }
-
-                    Ok(())
+                    Self::process_chunk(
+                        &self.running,
+                        &self.pipeline,
+                        shm_chunk,
+                        dataset,
+                        i,
+                        layout,
+                        true,
+                    )
                 })?;
         }
 
@@ -593,6 +660,17 @@ impl ZeroTensorProducer {
 
 impl Drop for ZeroTensorProducer {
     fn drop(&mut self) {
+        let cb = self.buffer.control_block();
+        let head = cb.head.load(Ordering::Acquire);
+        let timeout = std::time::Instant::now() + std::time::Duration::from_secs(5);
+
+        while cb.tail.load(Ordering::Acquire) < head {
+            if std::time::Instant::now() > timeout {
+                eprintln!("[ZeroTensor] Warning: Consumer did not drain all data");
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_micros(100));
+        }
         if self.sock_path.exists() {
             _ = fs::remove_file(&self.sock_path);
         }

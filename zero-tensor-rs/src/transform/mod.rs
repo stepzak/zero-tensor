@@ -14,6 +14,6 @@ pub use error::{ScalarConversionError, TransformError};
 pub use scalar::{IntoScalarOption, Scalar};
 pub use scale::Scale;
 
-pub trait Transform {
+pub trait Transform: Send + Sync {
     fn apply(&self, tensor: &mut TensorViewMut) -> Result<(), TransformError>;
 }
