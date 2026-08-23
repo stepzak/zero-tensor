@@ -21,6 +21,8 @@ pub trait ZeroTensorDataset: Send + Sync {
 
     fn len(&self) -> usize;
 
+    /// # Safety contract
+    /// Must return `Ok(bytes_written)` if the write operation was a success
     fn write_item_into(&self, idx: usize, buf: &mut [u8]) -> Result<usize, Self::Error>;
 
     fn get_batch_layout(&self, idxs: &[usize]) -> Result<TensorBatchLayout, Self::Error>;

@@ -22,12 +22,24 @@ impl Transform for Scale {
             }
             TensorViewMut::F32(t) => {
                 let factor: f32 = self.factor.try_into()?;
-                t.map_inplace(|x| *x *= factor);
+
+                if let Some(slice) = t.as_slice_mut() {
+                    for x in slice.iter_mut() {
+                        *x *= factor;
+                    }
+                } else {
+                    *t *= factor;
+                }
             }
             TensorViewMut::F64(t) => {
                 let factor: f64 = self.factor.try_into()?;
-
-                t.map_inplace(|x| *x *= factor);
+                if let Some(slice) = t.as_slice_mut() {
+                    for x in slice.iter_mut() {
+                        *x *= factor;
+                    }
+                } else {
+                    *t *= factor;
+                }
             }
             TensorViewMut::U8(t) => {
                 let factor = self.factor.try_into()?;

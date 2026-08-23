@@ -36,6 +36,21 @@ pub enum TensorViewMut<'a> {
     U8(ArrayViewMutD<'a, u8>),
 }
 
+impl<'a> TensorViewMut<'a> {
+    pub fn total_bytes(&self) -> usize {
+        match self {
+            TensorViewMut::F16(v) => v.len() * size_of::<half::f16>(),
+            TensorViewMut::F32(v) => v.len() * size_of::<f32>(),
+            TensorViewMut::F64(v) => v.len() * size_of::<f64>(),
+            TensorViewMut::BF16(v) => v.len() * size_of::<half::bf16>(),
+            TensorViewMut::I8(v) => v.len() * size_of::<i8>(),
+            TensorViewMut::I32(v) => v.len() * size_of::<i32>(),
+            TensorViewMut::I64(v) => v.len() * size_of::<i64>(),
+            TensorViewMut::U8(v) => v.len() * size_of::<u8>(),
+        }
+    }
+}
+
 pub type ShapeType = usize;
 pub type StrideType = usize;
 

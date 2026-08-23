@@ -89,7 +89,6 @@ fn stops_after_error() {
 
     assert!(result.is_err());
 
-    // Выполнился только первый transform.
     assert_eq!(calls.load(Ordering::SeqCst), 1);
 }
 
