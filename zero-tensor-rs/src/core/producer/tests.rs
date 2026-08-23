@@ -22,8 +22,8 @@ impl ZeroTensorDataset for FailingDataset {
         ))
     }
 
-    fn write_item_into(&self, _idx: usize, _buf: &mut [u8]) -> Result<(), Self::Error> {
-        Ok(())
+    fn write_item_into(&self, _idx: usize, _buf: &mut [u8]) -> Result<usize, Self::Error> {
+        Ok(0)
     }
 }
 
@@ -144,9 +144,9 @@ fn test_producer_detects_dead_consumer() {
                 TensorDT::F32,
             ))
         }
-        fn write_item_into(&self, _idx: usize, buf: &mut [u8]) -> Result<(), Self::Error> {
+        fn write_item_into(&self, _idx: usize, buf: &mut [u8]) -> Result<usize, Self::Error> {
             buf[..16].fill(0);
-            Ok(())
+            Ok(16)
         }
     }
 

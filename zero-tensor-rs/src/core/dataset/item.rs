@@ -140,13 +140,6 @@ impl TensorBatchLayout {
     ) -> Result<TensorViewMut<'a>, TensorViewError> {
         self.try_view_mut_inner(raw_bytes, 0)
     }
-
-    pub fn try_view_item_mut<'a>(
-        &self,
-        raw_bytes: &'a mut [u8],
-    ) -> Result<TensorViewMut<'a>, TensorViewError> {
-        self.try_view_mut_inner(raw_bytes, 1)
-    }
 }
 
 #[cfg(test)]

@@ -21,7 +21,7 @@ pub trait ZeroTensorDataset: Send + Sync {
 
     fn len(&self) -> usize;
 
-    fn write_item_into(&self, idx: usize, buf: &mut [u8]) -> Result<(), Self::Error>;
+    fn write_item_into(&self, idx: usize, buf: &mut [u8]) -> Result<usize, Self::Error>;
 
     fn get_batch_layout(&self, idxs: &[usize]) -> Result<TensorBatchLayout, Self::Error>;
 

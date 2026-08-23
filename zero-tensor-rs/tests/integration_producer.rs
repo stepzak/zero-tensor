@@ -71,19 +71,20 @@ impl ZeroTensorDataset for DynamicDataset {
         Ok(TensorBatchLayout::new(shape, strides, TensorDT::F32))
     }
 
-    fn write_item_into(&self, idx: usize, buf: &mut [u8]) -> Result<(), Self::Error> {
+    fn write_item_into(&self, idx: usize, buf: &mut [u8]) -> Result<usize, Self::Error> {
         let (h, w) = self.shapes[idx];
         let total_els = (h * w) as usize;
 
         let f32_buf =
             unsafe { std::slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut f32, total_els) };
-
+        let mut bytes_written = 0;
         for r in 0..h {
             for c in 0..w {
                 f32_buf[(r * w + c) as usize] = (r * 10 + c + idx * 100) as f32;
+                bytes_written += size_of::<f32>();
             }
         }
-        Ok(())
+        Ok(bytes_written)
     }
 }
 

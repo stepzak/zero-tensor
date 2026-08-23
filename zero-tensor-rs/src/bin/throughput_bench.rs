@@ -1,18 +1,22 @@
 use std::path::Path;
-use zero_tensor_lib::core::{
-    dataset::{
-        ZeroTensorDataset,
-        item::{ShapeType, TensorBatchLayout, TensorDT},
+use zero_tensor_lib::{
+    core::{
+        dataset::{
+            ZeroTensorDataset,
+            item::{ShapeType, TensorBatchLayout, TensorDT},
+        },
+        producer::ZeroTensorProducerBuilder,
     },
-    producer::ZeroTensorProducerBuilder,
+    pipeline::Pipeline,
+    transform,
 };
 
-const BATCH_SIZE: usize = 12;
+const BATCH_SIZE: usize = 48;
 const CHANNELS: ShapeType = 3;
-const HEIGHT: ShapeType = 1024;
-const WIDTH: ShapeType = 1024;
+const HEIGHT: ShapeType = 512;
+const WIDTH: ShapeType = 512;
 const STEPS: u64 = 200;
-const NSLOTS: u64 = 10;
+const NSLOTS: u64 = 32;
 
 struct BenchDataset {
     raw_item_size: usize,
@@ -51,15 +55,11 @@ impl ZeroTensorDataset for BenchDataset {
         Ok(self.meta.clone())
     }
 
-    fn write_item_into(&self, idx: usize, buf: &mut [u8]) -> Result<(), Self::Error> {
+    fn write_item_into(&self, _idx: usize, buf: &mut [u8]) -> Result<usize, Self::Error> {
         let target = &mut buf[..self.raw_item_size];
         target.copy_from_slice(&self.source_buffer[..self.raw_item_size]);
 
-        for byte in target.iter_mut() {
-            *byte = byte.wrapping_add(idx as u8);
-        }
-
-        Ok(())
+        Ok(self.raw_item_size)
     }
 }
 
@@ -85,6 +85,7 @@ fn main() {
 
     let mut producer = ZeroTensorProducerBuilder::new(slot_size, shm_name, socket_path)
         .num_slots(NSLOTS)
+        .pipeline(Pipeline::new().then(transform::Scale::new(3)))
         .build()
         .expect("Failed to create producer");
 
