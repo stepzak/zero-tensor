@@ -27,3 +27,4 @@ Thumbs.db
 test.py
 perf.data
 perf_report.txt
+*.asm
