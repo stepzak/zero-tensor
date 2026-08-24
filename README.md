@@ -146,7 +146,7 @@ with ZeroTensorConsumer(socket_path, shm_name) as consumer:
             optimizer.step()
 ```
 
-🗺️ Roadmap & Future Work
+Roadmap & Future Work
 We are actively working on scaling ZeroTensor to support more complex deep learning workloads. Contributions are highly welcome!
 
 [x] **In-Place Rust Dataset Pipeline**: Refactored core dataset traits to highly optimized in-place memory writes using zero-cost slicing.
