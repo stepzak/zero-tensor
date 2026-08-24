@@ -146,13 +146,20 @@ with ZeroTensorConsumer(socket_path, shm_name) as consumer:
             optimizer.step()
 ```
 
-Roadmap & Future Work
+## Roadmap & Future Work
+
 We are actively working on scaling ZeroTensor to support more complex deep learning workloads. Contributions are highly welcome!
 
 [x] **In-Place Rust Dataset Pipeline**: Refactored core dataset traits to highly optimized in-place memory writes using zero-cost slicing.
+
 [x] **Builder Pattern & Multi-Epoch Shuffling**: Integrated flexible producer initialization with configurable shuffling seeds and epoch signaling.
+
 [x] **SIMD-Optimized Transforms**: Scale, Add, Clamp, and Standardize now utilize native SIMD vectorization (AVX2/AVX-512) via ndarray + rayon.
+
 [x] **Selective Zeroing & Atomic Safety**: Guaranteed "all-or-nothing" atomicity for integer operations and prevention of data leakage between batches.
+
 [] **Managed Consumer API**: Allow Python to automatically spawn and manage the Rust Producer process (similar to webdataset).
+
 [] **GPU-Direct Support**: Direct SHM-to-GPU memory mapping via CUDA IPC to bypass CPU RAM entirely (targeting NVIDIA DALI-level performance).
+
 [] **Distributed Training Support**: Multi-node broadcasting capabilities.
