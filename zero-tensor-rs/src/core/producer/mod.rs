@@ -75,6 +75,7 @@ struct CopyCtx {
     pub element_size_bytes: usize,
 }
 
+/// `Pipeline` is applied per-batch, not per-item. To apply per-item pipeline, use it in dataset's `write_item_into`
 pub struct ZeroTensorProducer {
     buffer: ZeroTensorBuffer,
     listener: UnixListener,
@@ -513,9 +514,14 @@ impl ZeroTensorProducer {
 
         self.buffer
             .write_tensor(offset, &batch_shape, &batch_strides, dt, &[])?;
-
+        let batch_layout = TensorBatchLayout::new(batch_shape, batch_strides, dt);
         let total_data_bytes = current_batch_size * element_size_bytes;
-        Ok((offs.data(), total_data_bytes, element_size_bytes, layout))
+        Ok((
+            offs.data(),
+            total_data_bytes,
+            element_size_bytes,
+            batch_layout,
+        ))
     }
 
     fn check_running(running: &Arc<AtomicBool>) -> Result<(), io::Error> {
@@ -527,11 +533,9 @@ impl ZeroTensorProducer {
 
     fn process_chunk<D: ZeroTensorDataset>(
         running: &Arc<AtomicBool>,
-        pipeline: &Option<Pipeline>,
         shm_chunk: &mut [u8],
         dataset: &D,
         i: usize,
-        layout: &TensorBatchLayout,
         atomic: bool,
     ) -> Result<(), ZTProducerErr<D::Error>> {
         if atomic {
@@ -556,10 +560,6 @@ impl ZeroTensorProducer {
         }
         if written < shm_chunk.len() {
             shm_chunk[written..].fill(0);
-        }
-        if let Some(p) = &pipeline {
-            let mut view = layout.try_view_mut(shm_chunk)?;
-            p.exec(&mut view)?;
         }
         Ok(())
     }
@@ -589,31 +589,20 @@ impl ZeroTensorProducer {
                 .chunks_mut(element_size_bytes)
                 .zip(batch_indices)
             {
-                Self::process_chunk(
-                    &self.running,
-                    &self.pipeline,
-                    shm_chunk,
-                    dataset,
-                    i,
-                    layout,
-                    false,
-                )?;
+                Self::process_chunk(&self.running, shm_chunk, dataset, i, false)?;
             }
         } else {
             raw_shm_slice
                 .par_chunks_mut(element_size_bytes)
                 .zip(batch_indices)
                 .try_for_each(|(shm_chunk, &i)| -> Result<(), ZTProducerErr<D::Error>> {
-                    Self::process_chunk(
-                        &self.running,
-                        &self.pipeline,
-                        shm_chunk,
-                        dataset,
-                        i,
-                        layout,
-                        true,
-                    )
+                    Self::process_chunk(&self.running, shm_chunk, dataset, i, true)
                 })?;
+        }
+
+        if let Some(pipeline) = &self.pipeline {
+            let mut tensor = layout.try_view_mut(raw_shm_slice)?;
+            pipeline.exec(&mut tensor)?;
         }
 
         Ok(())
