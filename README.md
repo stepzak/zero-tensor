@@ -138,7 +138,8 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 with ZeroTensorConsumer(socket_path, shm_name) as consumer:
     for epoch in range(5):
         for batch in consumer:
-            inputs = batch.clone().to(device, non_blocking=True)
+            # IMPORTANT: do not use default batch.to() method, as it may lead to Race Condition
+            inputs = consumer.to_device(batch, device, non_blocking=True)
             
             outputs = model(inputs)
             loss = criterion(outputs, targets)
