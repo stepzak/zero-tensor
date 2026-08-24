@@ -1,85 +1,98 @@
-# ZeroTensor: Ultra-Fast IPC Data Loader for PyTorch
+# ZeroTensor
 
-`ZeroTensor` is a high-performance, lightweight inter-process communication (IPC) data transport for PyTorch built in Rust. It serves as a drop-in replacement for the standard PyTorch `DataLoader` in high-throughput training scenarios, eliminating serialization overhead, runtime memory allocations, and kernel-space system call bottlenecks.
+**Ultra-Fast Zero-Copy IPC Data Loader for PyTorch**
+
+Break the PyTorch `DataLoader` bottleneck. ZeroTensor is a high-performance, lock-free inter-process communication (IPC) data transport built in Rust. It serves as a drop-in replacement for standard multiprocessing data loading, eliminating serialization overhead, runtime memory allocations, and kernel-space bottlenecks.
 
 ---
 
-## Performance Benchmark (Total: 4800 MB Transferred)
+## Performance at a Glance
 
-*Environment: Synthetic dataset (3x512x512 F32 images), Batch Size 32, 300 Steps.*
+*Environment: Synthetic dataset (3×1024×1024 F32 tensors), Batch Size 12, 200 Steps, Single-node CPU.*
 
-| Metric | Standard PyTorch DataLoader | ZeroTensor IPC Loader | Improvement |
+| Framework / Configuration | Throughput | Page Faults | CPU Kernel Time |
 | :--- | :---: | :---: | :---: |
-| **Throughput** | ~4.7 GB/s | **8+ GB/s** | **~1.7x Faster** |
-| **Page Faults** | Linear growth per batch | **O(1) (Startup only)** | **Eliminated runtime paging** |
+| **PyTorch DataLoader** (Standard) | ~6.5 GB/s | Linear growth | ~90% |
+| **ZeroTensor** (Pure IPC, No Pipeline) | **~22.0 GB/s** | **O(1) (Startup only)** | **~5%** |
+| **ZeroTensor** (+ Rust SIMD Pipeline) | **~13.5 GB/s** | **O(1) (Startup only)** | **~15%** |
 
-> **Note:** The benchmark includes realistic CPU load (`copy_from_slice` + arithmetic) in the Rust producer to simulate real-world decoding/preprocessing. ZeroTensor maintains its lead even under heavy computational load due to its zero-copy architecture.
-
----
-
-## The Problem
-
-The standard PyTorch `DataLoader` using multiprocessing (`num_workers > 0`) hits severe performance walls due to Python and Linux kernel limitations:
-
-1. **Page-Fault Storms:** PyTorch workers constantly allocate new memory blocks for each incoming batch. Under high throughput, this forces the Linux kernel to constantly interrupt execution to map virtual addresses to physical pages (hundreds of thousands of page-faults per second).
-2. **Zombie Shared Memory:** If a PyTorch training run is dirty-killed (`Ctrl+C`, Out-Of-Memory, `kill -9`), orphaned shared memory blocks clutter `/dev/shm`, leaking RAM until a manual server reboot.
-3. **Double Copy & Serialization:** Tensors are serialized/deserialized through Unix sockets or pipes, consuming up to 30% of total CPU cycles in kernel space (`sys` mode).
+> **Why is ZeroTensor faster even with a pipeline?**  
+> Standard PyTorch wastes cycles on Pickle serialization and IPC pipes. ZeroTensor applies transformations (like `Scale`, `Normalize`) directly in Rust using SIMD vectorization *before* the data ever touches Python, maintaining a massive throughput advantage.
 
 ---
 
-## Architectural Solutions of ZeroTensor
+## The Problem with Standard Data Loading
 
-`ZeroTensor` decouples heavy I/O operations (parallel loading, decoding) in Rust from the Python-based model training loop using an optimized ring buffer.
+When scaling up training, the standard PyTorch `DataLoader` (`num_workers > 0`) hits hard architectural limits:
 
-* **Pre-allocated Ring Buffer (`mmap`):** Shared memory is mapped and "warmed up" once on startup. ZeroTensor maintains a fixed number of slots (`nslots`), avoiding dynamic allocations during the hot training loop.
-* **Lock-Free Parallel Loading (Rayon):** The Rust producer utilizes a work-stealing thread pool to parallelize dataset loading, populating memory slots concurrently without expensive mutex locks.
-* **Strict RAII Resource Management:** All temporary files, Unix sockets, and shared memory segments are tied to Rust's resource lifecycles (`Drop` trait). When the server drops, resources are safely unlinked and freed from `/dev/shm`.
-* **Idempotent Socket Binding:** The custom `overwrite` flag allows the engine to safely clean up dead, non-responsive zombie sockets upon initialization without failing.
+1. **Pickle Serialization Overhead:** Tensors are serialized/deserialized through Unix pipes, consuming up to 30% of total CPU cycles.
+2. **Page-Fault Storms:** Workers constantly allocate new memory blocks. The Linux kernel must constantly interrupt execution to map virtual addresses to physical pages.
+3. **Zombie Shared Memory:** Dirty kills (`Ctrl+C`, OOM) leave orphaned `/dev/shm` blocks, leaking RAM until a server reboot.
+4. **GIL Contention:** Python-based preprocessing in worker processes fights for the Global Interpreter Lock.
 
 ---
+
+## How ZeroTensor Solves It
+
+ZeroTensor decouples heavy I/O operations (parallel loading, decoding, preprocessing) in Rust from the Python training loop using an optimized ring buffer architecture.
+
+```text
+┌─────────────────────────────────────────────────────────────────┐
+│                       RUST PRODUCER                             │
+│  [Dataset Fetch] → [Rayon Parallel Write] → [SIMD Pipeline]     │
+└────────────────────────────┬────────────────────────────────────┘
+                             │ 
+                 ZERO-COPY SHARED MEMORY (mmap)
+                 (Pre-allocated, Pre-faulted, Lock-Free)
+                             │
+┌────────────────────────────┴────────────────────────────────────┐
+│                      PYTHON CONSUMER                            │
+│  [Atomic Head Check] → [torch.as_strided View] → [GPU Transfer] │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+* **Lock-Free SPSC Ring Buffer**: Uses `CachePadded` atomics for true zero-lock concurrency between `Producer` and `Consumer`.
+* **Pre-faulted Shared Memory**: Memory is mapped and "warmed up" once at startup. Zero runtime page faults.
+* **In-Place Rust Transforms**: Apply `Scale`, `Add`, `Clamp`, or `Standardize` directly to the SHM buffer with automatic AVX2/AVX-512 vectorization.
+* **Strict RAII Cleanup**: All sockets and `/dev/shm` segments are tied to Rust lifecycles. They are safely unlinked on panic, `SIGINT`, or normal drop.
 
 ## Quick Start
-
 ### 1. Rust Data Producer
-
-
-Define your dataset using the `ZeroTensorDataset` trait. Note the support for dynamic layouts via `get_batch_layout`.
+Define your dataset using the `ZeroTensorDataset` trait. You can optionally attach a high-performance `Pipeline` to preprocess data in Rust.
 
 ```rust
 use std::path::Path;
 use zero_tensor_lib::{
-    dataset::{
+    core::dataset::{
         item::{TensorDT, TensorBatchLayout},
         ZeroTensorDataset,
     },
     producer::ZeroTensorProducerBuilder,
+    pipeline::Pipeline,
+    transform::Scale,
 };
 use smallvec::smallvec;
 
-struct MyDataset {
-    // Store metadata or source paths here
-}
+struct MyDataset { /* Store metadata or source paths here */ }
 
 impl ZeroTensorDataset for MyDataset {
     type Error = std::io::Error;
 
-    fn len(&self) -> usize { 10000 }
+    fn len(&self) -> usize { 10_000 }
     fn is_empty(&self) -> bool { false }
 
-    /// Returns the layout for the ENTIRE batch (handling padding if needed)
-    fn get_batch_layout(&self, indices: &[usize]) -> Result<TensorBatchLayout, Self::Error> {
-        // Logic to find max H/W in indices and return padded layout
-        // For fixed size, just return the static layout:
+    /// Returns the layout for a SINGLE item (Producer handles batch dimension automatically)
+    fn get_batch_layout(&self, _indices: &[usize]) -> Result<TensorBatchLayout, Self::Error> {
         Ok(TensorBatchLayout::new(
-            smallvec![3, 512, 512], // Shape [C, H, W]
-            smallvec![512*512, 512, 1], // Strides in elements
+            smallvec![3, 1024, 1024],          // Shape [C, H, W]
+            smallvec![1024 * 1024, 1024, 1],   // Strides in elements
             TensorDT::F32
         ))
     }
 
     /// Writes raw item bytes directly into the pre-allocated slice
     fn write_item_into(&self, idx: usize, buf: &mut [u8]) -> Result<(), Self::Error> {
-        // Write your data (e.g., image pixels) into 'buf'
+        // Write your decoded data (e.g., image pixels) into 'buf'
         // The buffer is already sized to the max shape of the batch
         Ok(())
     }
@@ -87,28 +100,32 @@ impl ZeroTensorDataset for MyDataset {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let dataset = MyDataset {};
-    let slot_size = 32 * 1024 * 1024; // 32 MB per slot
+    let slot_size = 48 * 1024 * 1024; // 48 MB per slot
+
+    // Optional: Add a high-performance preprocessing pipeline
+    let pipeline = Pipeline::new().then(Scale::new(1.0 / 255.0)); // Normalize to [0, 1]
 
     let mut producer = ZeroTensorProducerBuilder::new(
         slot_size,
         "zt_shared_buffer",
         Path::new("/tmp/zt.sock"),
     )
-    .num_slots(3) // Use 3+ slots for pipeline efficiency
-    .overwrite_socket(true)
+    .num_slots(4)               // Use 3+ slots for pipeline efficiency
+    .overwrite_socket(true)     // Safely clean up dead sockets on startup
     .shuffle(true)
     .seed(42)
+    .pipeline(pipeline)         // Attach the pipeline
     .build()?;
 
     println!("Producer running... Waiting for Python consumer.");
-    producer.start_streaming(&dataset, 32)?; // Batch size = 32
+    producer.start_streaming(&dataset, 12)?; // Batch size = 12
 
     Ok(())
 }
 ```
 
 ## 2. Python Training Consumer
-Simply wrap your training loop with the Python context manager. Tensors are mapped from memory instantly with zero-copy.
+Wrap your training loop with the Python context manager. Tensors are mapped from memory instantly with **zero-copy**.
 
 ```py
 import torch
@@ -116,44 +133,26 @@ from zero_tensor_py import ZeroTensorConsumer
 
 socket_path = "/tmp/zt.sock"
 shm_name = "zt_shared_buffer"
-slot_size = 32 * 1024 * 1024  # Must match producer slot size
-
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# Multi-epoch training loop
-with ZeroTensorConsumer(
-        socket_path, shm_name
-    ) as consumer:
+with ZeroTensorConsumer(socket_path, shm_name) as consumer:
     for epoch in range(5):
-            for batch in consumer:
-                inputs = batch.to(device, non_blocking=True)
-
-                outputs = model(inputs)
-                loss = criterion(outputs, targets)
-                loss.backward()
-                optimizer.step()
+        for batch in consumer:
+            inputs = batch.clone().to(device, non_blocking=True)
+            
+            outputs = model(inputs)
+            loss = criterion(outputs, targets)
+            loss.backward()
+            optimizer.step()
 ```
-## System Profile Deep Dive
-The telemetry captured via ``perf stat`` highlights why ZeroTensor outperforms traditional approaches:
 
-### Allocation Complexity: *O(1)* vs *O(N)*
-* **PyTorch** displays linear growth in page faults. Every batch requires new virtual memory mappings, and the first write to that memory triggers hardware page faults. 
-* **ZeroTensor** is bounded at *O(1)*. The 75,540 page-fault count represents the initial import of PyTorch, NumPy, and the mapping of the ring-buffer at startup. During the entire training run, the page-fault count remains flat.
+🗺️ Roadmap & Future Work
+We are actively working on scaling ZeroTensor to support more complex deep learning workloads. Contributions are highly welcome!
 
-### Kernel vs User Space
-* **PyTorch** spends 98% of its CPU runtime in kernel space (3.29s out of 3.33s elapsed time) resolving memory allocations and managing IPC file descriptors.
-* **ZeroTensor** shifts the execution profile entirely to user space, spending only 0.17s in kernel space. Your CPU cores are dedicated to actual data processing, not OS housekeeping.
-
----
-
-## Roadmap & TODO
-
-We are actively working on scaling `ZeroTensor` to support more complex deep learning workloads. Contributions are highly welcome!
-
-[x] **In-Place Rust Dataset Pipeline**: Refactored core dataset traits from dynamic heap allocations (Vec<u8>) to highly optimized in-place memory writes (write_item_into) using zero-cost slicing.
-
-[x] **Builder Pattern & Multi-Epoch Shuffling**: Integrated flexible producer initialization with configurable shuffling seeds.
-
-[x] **Native Multi-Epoch Control Loop**: Support continuous connection handling across epochs via explicit EPOCH_DONE signaling.
-
-[x] **Dynamic Tensor Shapes Support**: Implement elastic memory partitioning inside SHM slots for variable sequence length workloads (e.g., LLM tokenization, audio processing).
+[x] **In-Place Rust Dataset Pipeline**: Refactored core dataset traits to highly optimized in-place memory writes using zero-cost slicing.
+[x] **Builder Pattern & Multi-Epoch Shuffling**: Integrated flexible producer initialization with configurable shuffling seeds and epoch signaling.
+[x] **SIMD-Optimized Transforms**: Scale, Add, Clamp, and Standardize now utilize native SIMD vectorization (AVX2/AVX-512) via ndarray + rayon.
+[x] **Selective Zeroing & Atomic Safety**: Guaranteed "all-or-nothing" atomicity for integer operations and prevention of data leakage between batches.
+[] **Managed Consumer API**: Allow Python to automatically spawn and manage the Rust Producer process (similar to webdataset).
+[] **GPU-Direct Support**: Direct SHM-to-GPU memory mapping via CUDA IPC to bypass CPU RAM entirely (targeting NVIDIA DALI-level performance).
+[] **Distributed Training Support**: Multi-node broadcasting capabilities.

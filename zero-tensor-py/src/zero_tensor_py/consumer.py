@@ -234,6 +234,8 @@ class ZeroTensorConsumer:
             batch_tensor = torch.as_strided(flat_tensor, shape, strides)
             try:
                 yield batch_tensor
-            finally:    
+            finally:
+                if torch.cuda.is_available():
+                    torch.cuda.current_stream().synchronize()
                 tail += 1
                 self._store_tail(tail)
