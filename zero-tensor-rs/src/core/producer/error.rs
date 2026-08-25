@@ -2,7 +2,13 @@ use std::io;
 
 use thiserror::Error;
 
-use crate::{core::{buffer::ZTBufErr, dataset::{ZTDatasetError, item::TensorViewError}}, pipeline::PipelineError};
+use crate::{
+    core::{
+        buffer::ZTBufErr,
+        dataset::{ZTDatasetError, item::TensorViewError},
+    },
+    pipeline::PipelineError,
+};
 
 #[derive(Debug, Error)]
 pub enum ZTProducerNewErr {

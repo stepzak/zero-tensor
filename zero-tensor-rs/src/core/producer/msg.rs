@@ -1,17 +1,22 @@
+use std::fmt::Write;
+
 pub const VERSION: &str = "0.6.0";
 
-struct HandshakeBuilder {
-    cur_msg: String
+pub struct HandshakeBuilder {
+    cur_msg: String,
 }
 
 impl HandshakeBuilder {
     pub fn new() -> Self {
-        Self { cur_msg: format!("ZT {VERSION} ") }
+        let mut s = String::with_capacity(512);
+        s.push_str("ZT ");
+        s.push_str(VERSION);
+        s.push(' ');
+        Self { cur_msg: s }
     }
 
     pub fn add_key<T: std::fmt::Display>(mut self, key: &str, value: T) -> Self {
-        let msg = format!("{key}={value} ");
-        self.cur_msg += &msg;
+        let _ = write!(self.cur_msg, "{key}={value} ");
         self
     }
 
@@ -41,10 +46,8 @@ mod tests {
 
     #[test]
     fn test_add_single_key() {
-        let result = HandshakeBuilder::new()
-            .add_key("cb_size", 152)
-            .build();
-        
+        let result = HandshakeBuilder::new().add_key("cb_size", 152).build();
+
         assert!(result.starts_with("ZT 0.6.0 "));
         assert!(result.contains("cb_size=152"));
         assert!(result.ends_with('\n'));
@@ -57,7 +60,7 @@ mod tests {
             .add_key("head_offset", 0)
             .add_key("tail_offset", 64)
             .build();
-        
+
         let parts: Vec<&str> = result.trim().split_whitespace().collect();
         assert_eq!(parts[0], "ZT");
         assert_eq!(parts[1], VERSION);
@@ -82,7 +85,7 @@ mod tests {
             .add_key("bool_val", true)
             .add_key("float_val", 3.14f64)
             .build();
-        
+
         assert!(result.contains("int_val=42"));
         assert!(result.contains("str_val=hello"));
         assert!(result.contains("bool_val=true"));
@@ -91,10 +94,8 @@ mod tests {
 
     #[test]
     fn test_build_appends_newline_exactly_once() {
-        let result = HandshakeBuilder::new()
-            .add_key("key", "value")
-            .build();
-        
+        let result = HandshakeBuilder::new().add_key("key", "value").build();
+
         assert!(result.ends_with('\n'));
         assert_eq!(result.matches('\n').count(), 1);
     }
@@ -115,11 +116,11 @@ mod tests {
             .add_key("slot_size", 1024)
             .add_key("tensor_keys", "image,mask,label")
             .build();
-        
+
         let parts: Vec<&str> = result.trim().split_whitespace().collect();
         assert_eq!(parts[0], "ZT");
         assert_eq!(parts[1], VERSION);
-        
+
         for part in &parts[2..] {
             assert!(part.contains('='), "Part '{part}' is not key=value");
             let (key, value) = part.split_once('=').unwrap();
@@ -135,16 +136,16 @@ mod tests {
             .add_key("head_offset", 0)
             .add_key("tensor_keys", "image,mask")
             .build();
-        
+
         let parts: Vec<&str> = handshake.trim().split_whitespace().collect();
         assert_eq!(parts[0], "ZT");
-        
+
         let mut parsed: std::collections::HashMap<&str, &str> = std::collections::HashMap::new();
         for part in &parts[2..] {
             let (k, v) = part.split_once('=').unwrap();
             parsed.insert(k, v);
         }
-        
+
         assert_eq!(parsed["cb_size"], "152");
         assert_eq!(parsed["head_offset"], "0");
         assert_eq!(parsed["tensor_keys"], "image,mask");

@@ -1,5 +1,6 @@
 use std::{error::Error, fmt::Debug};
 
+use indexmap::IndexMap;
 use item::TensorBatchLayout;
 
 use crate::core::writer::TensorWriter;
@@ -25,9 +26,12 @@ pub trait ZeroTensorDataset: Send + Sync {
 
     /// # Safety contract
     /// Must return `Ok(bytes_written)` if the write operation was a success
-    fn write_item_into(&self, idx: usize, buf: &mut [u8]) -> Result<usize, Self::Error>;
+    fn write_item_into(&self, idx: usize, writer: &mut TensorWriter) -> Result<(), Self::Error>;
 
-    fn get_batch_layout(&self, idxs: &[usize]) -> Result<TensorBatchLayout, Self::Error>;
+    fn get_batch_layouts(
+        &self,
+        idxs: &[usize],
+    ) -> Result<IndexMap<&str, TensorBatchLayout>, Self::Error>;
 
     fn is_empty(&self) -> bool;
 }

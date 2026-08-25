@@ -55,7 +55,7 @@ fn test_writer_buffer_too_small_on_creation() {
     let mut layouts = IndexMap::new();
     layouts.insert("a", mock_layout(100));
 
-    let mut buffer = vec![0u8; 64]; 
+    let mut buffer = vec![0u8; 64];
     let result = TensorWriter::new(layouts, &mut buffer);
 
     assert!(matches!(

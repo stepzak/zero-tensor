@@ -59,6 +59,11 @@ const MAX_NDIMS: usize = 8;
 pub type ShapeVec = SmallVec<[ShapeType; MAX_NDIMS]>;
 pub type StrideVec = SmallVec<[StrideType; MAX_NDIMS]>;
 
+#[derive(Debug)]
+pub enum LayoutError {
+    ShapeStrideMismatch { strides: u8, shape: u8 }
+}
+
 #[derive(Debug, Clone)]
 pub struct TensorBatchLayout {
     shape: ShapeVec,
@@ -89,6 +94,18 @@ impl TensorBatchLayout {
 
     pub fn total_bytes(&self) -> usize {
         self.total_elements() * get_dt_size(self.dt)
+    }
+
+    pub fn add_batch_dimension(&mut self, batch_size: usize) -> Result<(), LayoutError> {
+        if self.shape().len() != self.strides().len() {
+            return Err(LayoutError::ShapeStrideMismatch { strides: self.strides.len() as u8, shape: self.shape.len() as u8 });
+        }
+
+        self.shape_mut().insert(0, batch_size);
+        let batch_stride = self.shape().iter().skip(1).product();
+        self.strides_mut().insert(0, batch_stride);
+
+        Ok(())
     }
 
     fn try_view_mut_inner<'a>(
@@ -155,10 +172,19 @@ impl TensorBatchLayout {
     ) -> Result<TensorViewMut<'a>, TensorViewError> {
         self.try_view_mut_inner(raw_bytes, 0)
     }
+
+    pub fn shape_mut(&mut self) -> &mut ShapeVec {
+        &mut self.shape
+    }
+
+    pub fn strides_mut(&mut self) -> &mut StrideVec {
+        &mut self.strides
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use smallvec::smallvec;
     use super::*;
     use bytemuck::cast_slice_mut;
 
@@ -369,4 +395,59 @@ mod tests {
             _ => panic!("expected F32 view"),
         }
     }
+
+    #[test]
+    fn test_add_batch_dimension_c_contiguous() {
+        let mut layout = TensorBatchLayout::new(
+            smallvec![3, 224, 224],
+            smallvec![224 * 224, 224, 1],
+            TensorDT::F32,
+        );
+
+        layout.add_batch_dimension(32).unwrap();
+
+        assert_eq!(layout.shape(), &[32, 3, 224, 224]);
+        assert_eq!(layout.strides(), &[3 * 224 * 224, 224 * 224, 224, 1]);
+    }
+
+    #[test]
+    fn test_add_batch_dimension_non_contiguous() {
+        let mut layout = TensorBatchLayout::new(
+            smallvec![224, 224, 3],
+            smallvec![1, 224, 224 * 224],
+            TensorDT::F32,
+        );
+
+        layout.add_batch_dimension(16).unwrap();
+
+        assert_eq!(layout.shape(), &[16, 224, 224, 3]);
+        assert_eq!(layout.strides(), &[150528, 1, 224, 224 * 224]);
+    }
+
+    #[test]
+    fn test_add_batch_dimension_shape_stride_mismatch() {
+        let mut layout = TensorBatchLayout::new(
+            smallvec![3, 224],
+            smallvec![224, 1, 5],
+            TensorDT::F32,
+        );
+
+        let result = layout.add_batch_dimension(32);
+        assert!(matches!(result, Err(LayoutError::ShapeStrideMismatch { .. })));
+    }
+
+    #[test]
+    fn test_add_batch_dimension_1d() {
+        let mut layout = TensorBatchLayout::new(
+            smallvec![100],
+            smallvec![1],
+            TensorDT::I32,
+        );
+
+        layout.add_batch_dimension(8).unwrap();
+
+        assert_eq!(layout.shape(), &[8, 100]);
+        assert_eq!(layout.strides(), &[100, 1]);
+    }
+
 }
