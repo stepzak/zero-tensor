@@ -9,6 +9,7 @@ crossbeam-utils = "0.8.22"
 ctrlc = "3.5.2"
 fastrand = "2.5.0"
 half = { version = "2.7.1", features = ["bytemuck"] }
+indexmap = "2.14.0"
 libc = "0.2.186"
 ndarray = { version = "0.17.2", features = ["rayon"] }
 rand = "0.10.2"
