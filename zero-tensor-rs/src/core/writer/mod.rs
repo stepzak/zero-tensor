@@ -21,13 +21,13 @@ impl<'a> TensorWriter<'a> {
     pub const ALIGNMENT: usize = 64;
 
     pub fn new(
-        layouts: IndexMap<&'a str, TensorBatchLayout>,
+        layouts: &IndexMap<&'a str, TensorBatchLayout>,
         slot_buffer: &'a mut [u8],
     ) -> Result<Self, TensorWriterError<'a>> {
         let mut im = IndexMap::new();
         let mut acc = 0usize;
 
-        for (k, v) in layouts {
+        for (&k, v) in layouts {
             let size = align_to(v.total_bytes(), Self::ALIGNMENT);
             im.insert(k, (acc, size));
             acc += size;
@@ -47,6 +47,10 @@ impl<'a> TensorWriter<'a> {
             slot_buffer,
             written: HashSet::with_capacity(l),
         }) //TODO: think about smallvec if the keys are few
+    }
+
+    pub fn get_offset_size(&self, key: &str) -> Option<(usize, usize)> {
+        self.slot_buffers.get(key).copied()
     }
 
     pub fn write<F, E>(

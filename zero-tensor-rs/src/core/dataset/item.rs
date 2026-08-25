@@ -61,7 +61,7 @@ pub type StrideVec = SmallVec<[StrideType; MAX_NDIMS]>;
 
 #[derive(Debug)]
 pub enum LayoutError {
-    ShapeStrideMismatch { strides: u8, shape: u8 }
+    ShapeStrideMismatch { strides: u8, shape: u8 },
 }
 
 #[derive(Debug, Clone)]
@@ -98,7 +98,10 @@ impl TensorBatchLayout {
 
     pub fn add_batch_dimension(&mut self, batch_size: usize) -> Result<(), LayoutError> {
         if self.shape().len() != self.strides().len() {
-            return Err(LayoutError::ShapeStrideMismatch { strides: self.strides.len() as u8, shape: self.shape.len() as u8 });
+            return Err(LayoutError::ShapeStrideMismatch {
+                strides: self.strides.len() as u8,
+                shape: self.shape.len() as u8,
+            });
         }
 
         self.shape_mut().insert(0, batch_size);
@@ -184,9 +187,9 @@ impl TensorBatchLayout {
 
 #[cfg(test)]
 mod tests {
-    use smallvec::smallvec;
     use super::*;
     use bytemuck::cast_slice_mut;
+    use smallvec::smallvec;
 
     #[test]
     fn view_contiguous_1d() {
@@ -426,28 +429,23 @@ mod tests {
 
     #[test]
     fn test_add_batch_dimension_shape_stride_mismatch() {
-        let mut layout = TensorBatchLayout::new(
-            smallvec![3, 224],
-            smallvec![224, 1, 5],
-            TensorDT::F32,
-        );
+        let mut layout =
+            TensorBatchLayout::new(smallvec![3, 224], smallvec![224, 1, 5], TensorDT::F32);
 
         let result = layout.add_batch_dimension(32);
-        assert!(matches!(result, Err(LayoutError::ShapeStrideMismatch { .. })));
+        assert!(matches!(
+            result,
+            Err(LayoutError::ShapeStrideMismatch { .. })
+        ));
     }
 
     #[test]
     fn test_add_batch_dimension_1d() {
-        let mut layout = TensorBatchLayout::new(
-            smallvec![100],
-            smallvec![1],
-            TensorDT::I32,
-        );
+        let mut layout = TensorBatchLayout::new(smallvec![100], smallvec![1], TensorDT::I32);
 
         layout.add_batch_dimension(8).unwrap();
 
         assert_eq!(layout.shape(), &[8, 100]);
         assert_eq!(layout.strides(), &[100, 1]);
     }
-
 }

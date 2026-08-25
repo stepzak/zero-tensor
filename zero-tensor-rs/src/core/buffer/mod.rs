@@ -180,6 +180,17 @@ impl ZeroTensorBuffer {
     }
 
     ///Strides must be in number of elements!
+    pub fn write_tensor_metadata(
+        &mut self,
+        offset: usize,
+        shape: &[ShapeType],
+        strides: &[StrideType],
+        dt: TensorDT
+    ) -> Result<(), ZTBufErr> {
+        self.write_tensor(offset, shape, strides, dt, &[])
+    }
+
+    ///Strides must be in number of elements!
     pub fn write_tensor(
         &mut self,
         offset: usize,
@@ -262,6 +273,10 @@ impl ZeroTensorBuffer {
         }
         let ptr = unsafe { self.addr.add(slot_offset) };
         Ok(unsafe { std::slice::from_raw_parts(ptr, slot_size) })
+    }
+
+    pub fn total_size(&self) -> usize {
+        self.total_size
     }
 }
 
