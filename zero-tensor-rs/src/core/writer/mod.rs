@@ -29,7 +29,6 @@ impl<'a> TensorWriter<'a> {
 
         for (k, v) in layouts {
             let size = align_to(v.total_bytes(), Self::ALIGNMENT);
-            dbg!(size);
             im.insert(k, (acc, size));
             acc += size;
         }

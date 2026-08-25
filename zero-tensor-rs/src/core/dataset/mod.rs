@@ -2,6 +2,8 @@ use std::{error::Error, fmt::Debug};
 
 use item::TensorBatchLayout;
 
+use crate::core::writer::TensorWriter;
+
 pub mod item;
 
 pub type TensorBytes = Vec<u8>;

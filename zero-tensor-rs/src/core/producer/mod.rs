@@ -1,9 +1,11 @@
 #[cfg(test)]
 mod tests;
-
+pub mod error;
+mod msg;
+pub use error::*;
 use crate::{
-    core::dataset::item::{TensorBatchLayout, TensorViewError},
-    pipeline::{Pipeline, PipelineError},
+    core::dataset::item::{TensorBatchLayout},
+    pipeline::{Pipeline},
 };
 
 use super::{
@@ -40,7 +42,6 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
 };
-use thiserror::Error;
 
 pub const DEFAULT_SLOTS: u64 = 2;
 pub const CONSUMER_START: &str = "START";
@@ -86,40 +87,6 @@ pub struct ZeroTensorProducer {
     seed: Option<u64>,
     max_steps: Option<usize>,
     pipeline: Option<Pipeline>,
-}
-
-#[derive(Debug, Error)]
-pub enum ZTProducerNewErr {
-    #[error("ZT Buffer Error: {0}")]
-    ZTBufferError(#[from] ZTBufErr),
-
-    #[error("IO error: {0}")]
-    IoError(#[from] io::Error),
-}
-
-#[derive(Debug, Error)]
-pub enum ZTProducerErr<E: ZTDatasetError + 'static> {
-    #[error("ZT Buffer Error: {0}")]
-    ZTBufferError(#[from] ZTBufErr),
-
-    #[error("IO error at: {0}")]
-    IoError(#[from] io::Error),
-
-    #[error("Dataset error {source}")]
-    DatasetError {
-        idx: Option<usize>,
-        #[source]
-        source: E,
-    },
-
-    #[error("{0}")]
-    ProtocolError(String),
-
-    #[error("Pipeline error {0}")]
-    PipelineError(#[from] PipelineError),
-
-    #[error("Tensor View conv error {0}")]
-    TensorViewError(#[from] TensorViewError),
 }
 
 #[derive(Clone)]
@@ -298,9 +265,8 @@ impl ZeroTensorProducer {
         self.running.load(Ordering::SeqCst)
     }
 
-    fn send_handshake(&self, stream: &mut UnixStream) -> Result<(), io::Error> {
+    fn send_handshake(&self, stream: &mut UnixStream,) -> Result<(), io::Error> {
         let cb = self.buffer.control_block();
-
         let msg = format!(
             "ZT {} \
             cb_size={} \
@@ -313,7 +279,8 @@ impl ZeroTensorProducer {
             dt_offset={} dt_size={} \
             ndims_offset={} ndims_size={} \
             is_ready_offset={} is_ready_size={} \
-            shape_type_size={}\n",
+            shape_type_size={} \
+            keys=\n",
             VERSION,
             ZeroTensorControlBlock::SIZE,
             offset_of!(ZeroTensorControlBlock, head),
