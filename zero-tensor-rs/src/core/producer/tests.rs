@@ -1,13 +1,15 @@
 use crate::core::writer::TensorWriter;
-
-use super::super::dataset::item::TensorBatchLayout;
-use super::*;
+use crate::core::dataset::item::{TensorBatchLayout, TensorDT};
 use indexmap::IndexMap;
 use tempfile::tempdir;
+use std::thread;
+use std::time::Duration;
+
+use super::*;
 
 struct FailingDataset;
 
-impl ZeroTensorDataset for FailingDataset {
+impl<'a> ZeroTensorDataset<'a> for FailingDataset {
     type Error = std::io::Error;
 
     fn len(&self) -> usize {
@@ -18,21 +20,22 @@ impl ZeroTensorDataset for FailingDataset {
         false
     }
 
-    fn get_batch_layouts(
+    fn dynamic_layouts(
         &self,
         _idxs: &[usize],
-    ) -> Result<IndexMap<&'static str, TensorBatchLayout>, Self::Error> {
+    ) -> Result<IndexMap<&'a str, TensorBatchLayout>, Self::Error> {
         Err(std::io::Error::new(
             std::io::ErrorKind::Other,
             "Simulated dataset error",
         ))
     }
 
-    fn write_item_into(
-        &self,
-        _idx: usize,
-        _writer: &mut TensorWriter,
-    ) -> Result<(), Self::Error> {
+    fn write_item_into<'layout, 'b, 'c>(
+        &self, 
+        _idx: usize, 
+        _writer: &mut TensorWriter<'layout, 'b, 'c>
+    ) -> Result<(), Self::Error>
+    {
         Ok(())
     }
 }
@@ -58,7 +61,7 @@ fn test_dataset_failure() {
 
         let mut stream = match UnixStream::connect(&consumer_socket) {
             Ok(s) => s,
-            Err(_) => return,
+            Err(_) => return, 
         };
 
         let _ = ZeroTensorBuffer::open(&consumer_shm_name, 2048 * 2)
@@ -85,6 +88,7 @@ fn test_dataset_failure() {
     assert!(res.is_err(), "Expected dataset error, got {:?}", res);
 }
 
+
 #[test]
 fn test_raii_producer_cleans_up_socket_on_drop() {
     let dir = tempdir().unwrap();
@@ -107,7 +111,6 @@ fn test_raii_producer_cleans_up_socket_on_drop() {
     #[cfg(target_os = "linux")]
     {
         use std::path::PathBuf;
-
         let shm_path = PathBuf::from(format!("/dev/shm/{}", shm_name));
         assert!(
             !shm_path.exists(),
@@ -119,8 +122,8 @@ fn test_raii_producer_cleans_up_socket_on_drop() {
 #[test]
 fn test_raii_cleanup_on_panic() {
     let dir = tempdir().unwrap();
-    let sock_path = dir.path().join("integration_test.sock");
-    let shm_name = "zt_integration_test_shm";
+    let sock_path = dir.path().join("integration_test_panic.sock");
+    let shm_name = "zt_integration_test_shm_panic";
 
     let handle = std::thread::spawn({
         let sock_path = sock_path.clone();
@@ -150,7 +153,8 @@ fn test_producer_detects_dead_consumer() {
     let shm_name = "zt_death_test_shm";
 
     struct TinyDataset;
-    impl ZeroTensorDataset for TinyDataset {
+    
+    impl<'a> ZeroTensorDataset<'a> for TinyDataset {
         type Error = std::io::Error;
 
         fn len(&self) -> usize {
@@ -161,11 +165,12 @@ fn test_producer_detects_dead_consumer() {
             false
         }
 
-        fn get_batch_layouts(
+        fn dynamic_layouts(
             &self,
             _idxs: &[usize],
-        ) -> Result<IndexMap<&'static str, TensorBatchLayout>, Self::Error> {
-            let mut layouts = IndexMap::new();
+        ) -> Result<IndexMap<&'a str, TensorBatchLayout>, Self::Error>
+        {
+             let mut layouts = IndexMap::new();
             layouts.insert(
                 "data",
                 TensorBatchLayout::new(vec![4].into(), vec![1].into(), TensorDT::F32),
@@ -173,19 +178,18 @@ fn test_producer_detects_dead_consumer() {
             Ok(layouts)
         }
 
-        fn write_item_into(
-            &self,
-            _idx: usize,
-            writer: &mut TensorWriter,
-        ) -> Result<(), Self::Error> {
+        fn write_item_into<'layout, 'b, 'c>(
+            &self, 
+            _idx: usize, 
+            writer: &mut TensorWriter<'layout, 'b, 'c>
+        ) -> Result<(), Self::Error>
+        {
             writer
                 .write("data", |buf| {
                     buf[..16].fill(0);
                     Ok::<usize, std::io::Error>(16)
                 })
-                .map_err(|e| {
-                    std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
-                })?;
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
             Ok(())
         }
     }
@@ -264,7 +268,8 @@ fn test_multi_tensor_dataset() {
     let shm_name = "zt_multi_tensor_shm";
 
     struct MultiTensorDataset;
-    impl ZeroTensorDataset for MultiTensorDataset {
+    
+    impl<'a> ZeroTensorDataset<'a> for MultiTensorDataset {
         type Error = std::io::Error;
 
         fn len(&self) -> usize {
@@ -275,10 +280,10 @@ fn test_multi_tensor_dataset() {
             false
         }
 
-        fn get_batch_layouts(
+        fn dynamic_layouts(
             &self,
             _idxs: &[usize],
-        ) -> Result<IndexMap<&'static str, TensorBatchLayout>, Self::Error> {
+        ) -> Result<IndexMap<&'a str, TensorBatchLayout>, Self::Error> {
             let mut layouts = IndexMap::new();
             layouts.insert(
                 "image",
@@ -291,11 +296,12 @@ fn test_multi_tensor_dataset() {
             Ok(layouts)
         }
 
-        fn write_item_into(
-            &self,
-            idx: usize,
-            writer: &mut TensorWriter,
-        ) -> Result<(), Self::Error> {
+        fn write_item_into<'layout, 'b, 'c>(
+            &self, 
+            idx: usize, 
+            writer: &mut TensorWriter<'layout, 'b, 'c>
+        ) -> Result<(), Self::Error>
+        {
             writer
                 .write("image", |buf| {
                     let floats: &mut [f32] = bytemuck::cast_slice_mut(&mut buf[..16]);

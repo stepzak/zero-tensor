@@ -1,15 +1,18 @@
 use indexmap::IndexMap;
+use parking_lot::Mutex;
 use rayon::prelude::*;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use crate::core::buffer::tensor_meta::TensorHeader;
 use crate::core::buffer::{ZTBufErr, ZeroTensorBuffer};
-use crate::core::dataset::item::{LayoutError, TensorBatchLayout};
-use crate::core::dataset::{ZTDatasetError, ZeroTensorDataset};
+use crate::core::dataset::ZeroTensorDataset;
+use crate::core::dataset::item::{LayoutError, ShapeType, StrideType, TensorBatchLayout};
+use crate::core::helpers::align_to;
 use crate::core::producer::ZTProducerErr;
-use crate::core::writer::TensorWriter;
+use crate::core::writer::{TensorWriter, TensorWriterCache};
 
-pub fn prepare_batch_metadata<'a, D: ZeroTensorDataset>(
+pub fn prepare_batch_metadata<'a, D: ZeroTensorDataset<'a>>(
     dataset: &'a D,
     batch_indices: &[usize],
 ) -> Result<
@@ -23,19 +26,24 @@ pub fn prepare_batch_metadata<'a, D: ZeroTensorDataset>(
 > {
     let current_batch_size = batch_indices.len();
 
-    let mut single_layouts =
+    let mut single_layouts = if let Some(s) = dataset.static_layouts() {
+        s.clone()
+    } else {
         dataset
-            .get_batch_layouts(batch_indices)
+            .dynamic_layouts(&[0])
             .map_err(|e| ZTProducerErr::DatasetError {
-                idx: e.index(),
+                idx: 0.into(),
                 source: e,
-            })?;
+            })?
+    };
 
     let mut batch_layouts = single_layouts.clone();
     let mut element_size_bytes = 0usize;
 
     for (_, s_layout) in single_layouts.iter_mut() {
-        element_size_bytes += s_layout.total_bytes().next_multiple_of(TensorWriter::ALIGNMENT);
+        element_size_bytes += s_layout
+            .total_bytes()
+            .next_multiple_of(TensorWriter::ALIGNMENT);
     }
 
     for (_, b_layout) in batch_layouts.iter_mut() {
@@ -59,12 +67,13 @@ pub fn prepare_batch_metadata<'a, D: ZeroTensorDataset>(
     ))
 }
 
-pub fn process_chunk<'a, D: ZeroTensorDataset>(
+fn process_chunk<'a, 'layout, 'chunk, D: ZeroTensorDataset<'a>>(
     running: &Arc<AtomicBool>,
-    shm_chunk: &'a mut [u8],
+    shm_chunk: &'chunk mut [u8],
     dataset: &D,
-    layouts: &'a IndexMap<&str, TensorBatchLayout>,
+    layouts: &'layout IndexMap<&'layout str, TensorBatchLayout>,
     i: usize,
+    cache: &mut TensorWriterCache<'layout>,
 ) -> Result<(), ZTProducerErr<D::Error>> {
     if !running.load(Ordering::SeqCst) {
         return Err(ZTProducerErr::IoError(std::io::Error::from(
@@ -72,8 +81,8 @@ pub fn process_chunk<'a, D: ZeroTensorDataset>(
         )));
     }
 
-    let mut writer =
-        TensorWriter::new(&layouts.clone(), shm_chunk).map_err(ZTProducerErr::TensorWriterError)?;
+    let mut writer = TensorWriter::new(&layouts.clone(), shm_chunk, cache)
+        .map_err(ZTProducerErr::TensorWriterError)?;
 
     dataset
         .write_item_into(i, &mut writer)
@@ -95,64 +104,84 @@ pub fn process_chunk<'a, D: ZeroTensorDataset>(
     Ok(())
 }
 
-
-pub fn copy_batch_to_shm<D: ZeroTensorDataset>(
+pub fn copy_batch_to_shm<'a, 'layout, 'c, D: ZeroTensorDataset<'a>>(
     buffer: &mut ZeroTensorBuffer,
     running: &Arc<AtomicBool>,
     dataset: &D,
     batch_indices: &[usize],
     slot_offset: usize,
-    single_layouts: &IndexMap<&str, TensorBatchLayout>,
-    batch_layouts: &IndexMap<&str, TensorBatchLayout>,
+    single_layouts: &'layout IndexMap<&'layout str, TensorBatchLayout>,
+    batch_layouts: &IndexMap<&'layout str, TensorBatchLayout>,
     element_size_bytes: usize,
     total_data_bytes: usize,
+    caches: &'c mut [Mutex<TensorWriterCache<'layout>>]
 ) -> Result<(), ZTProducerErr<D::Error>> {
+    let mut metadata_offset = slot_offset;
+    for (_, layout) in batch_layouts.iter() {
+        buffer
+            .write_tensor_metadata(
+                metadata_offset,
+                layout.shape(),
+                layout.strides(),
+                layout.dt(),
+            )
+            .map_err(ZTProducerErr::ZTBufferError)?;
 
-    let raw_shm_slice = unsafe { buffer.get_item_slice_mut(slot_offset, 0, total_data_bytes) }?;
-
-    const RAYON_THRESHOLD: usize = 256 * 1024;
-
-    if total_data_bytes < RAYON_THRESHOLD {
-        for (shm_chunk, &i) in raw_shm_slice
-            .chunks_mut(element_size_bytes)
-            .zip(batch_indices)
-        {
-            process_chunk(running, shm_chunk, dataset, single_layouts, i)?;
-        }
-    } else {
-        raw_shm_slice
-            .par_chunks_mut(element_size_bytes)
-            .zip(batch_indices)
-            .try_for_each(
-                |(shm_chunk, &i)| -> Result<(), ZTProducerErr<D::Error>> {
-                    process_chunk(running, shm_chunk, dataset, single_layouts, i)
-                },
-            )?;
+        let ndims = layout.shape().len();
+        metadata_offset += align_to(
+            size_of::<TensorHeader>() + ndims * (size_of::<StrideType>() + size_of::<ShapeType>()),
+            TensorWriter::ALIGNMENT,
+        );
     }
 
+    let missing_keys_res = {
+        let raw_shm_slice: &mut [u8] =
+            unsafe { buffer.get_item_slice_mut(slot_offset, 0, total_data_bytes)? };
 
-    let offsets: Vec<(&str, usize)> = {
-        let meta_writer = TensorWriter::new(&batch_layouts.clone(), raw_shm_slice)
-            .map_err(ZTProducerErr::TensorWriterError)?;
+        const RAYON_THRESHOLD: usize = 256 * 1024;
 
-        batch_layouts
-            .keys()
-            .map(|&k| {
-                let (off, _size) = meta_writer
-                    .get_offset_size(k)
-                    .ok_or(ZTBufErr::InvalidShape(0, 0))?;
-                Ok((k, off))
-            })
-            .collect::<Result<Vec<_>, ZTBufErr>>()
-            .map_err(ZTProducerErr::ZTBufferError)?
+        if total_data_bytes < RAYON_THRESHOLD {
+            let mut res = Ok(());
+            for (shm_chunk, &i) in raw_shm_slice
+                .chunks_mut(element_size_bytes)
+                .zip(batch_indices)
+            {
+                let mut cache_guard = caches[i].lock();
+                if let Err(e) = process_chunk(
+                    running,
+                    shm_chunk,
+                    dataset,
+                    single_layouts,
+                    i,
+                    &mut cache_guard,
+                ) {
+                    res = Err(e);
+                    break;
+                }
+            }
+            res
+        } else {
+            raw_shm_slice
+                .par_chunks_mut(element_size_bytes)
+                .zip(batch_indices)
+                .enumerate()
+                .try_for_each(
+                    |(idx, (shm_chunk, &i))| -> Result<(), ZTProducerErr<D::Error>> {
+                        let mut cache_guard = caches[idx % caches.len()].lock();
+                        process_chunk(
+                            running,
+                            shm_chunk,
+                            dataset,
+                            single_layouts,
+                            i,
+                            &mut cache_guard,
+                        )
+                    },
+                )
+        }
     };
 
-    for (k, off) in offsets {
-        let v = &batch_layouts[k];
-        buffer
-            .write_tensor_metadata(slot_offset + off, v.shape(), v.strides(), v.dt())
-            .map_err(ZTProducerErr::ZTBufferError)?;
-    }
+    missing_keys_res?;
 
     Ok(())
 }

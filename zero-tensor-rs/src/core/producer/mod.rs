@@ -4,12 +4,12 @@ mod msg;
 #[cfg(test)]
 mod tests;
 pub use error::*;
+use parking_lot::Mutex;
+
+use crate::core::writer::TensorWriterCache;
 
 use super::{
-    buffer::{
-        ZeroTensorBuffer, control_block::ZeroTensorControlBlock,
-        tensor_meta::TensorHeader,
-    },
+    buffer::{ZeroTensorBuffer, control_block::ZeroTensorControlBlock, tensor_meta::TensorHeader},
     dataset::{
         ZeroTensorDataset,
         item::{ShapeType, TensorDT},
@@ -63,7 +63,6 @@ enum ZTConsumerCmd {
 enum ZTProducerCmd {
     EpochEnd,
 }
-
 
 pub struct ZeroTensorProducer {
     buffer: ZeroTensorBuffer,
@@ -304,9 +303,9 @@ impl ZeroTensorProducer {
         }
     }
 
-    fn start_streaming_loop<D: ZeroTensorDataset>(
+    fn start_streaming_loop<'a, D: ZeroTensorDataset<'a>>(
         &mut self,
-        dataset: &D,
+        dataset: &'a D,
         batch_size: usize,
         stream: &mut UnixStream,
     ) -> Result<(), ZTProducerErr<D::Error>> {
@@ -316,15 +315,20 @@ impl ZeroTensorProducer {
 
         let mut reader = BufReader::new(stream.try_clone().map_err(ZTProducerErr::IoError)?);
         let mut buf = String::with_capacity(CONSUMER_RESP_BUFFER);
-
-        let keys: Vec<&str> = dataset
-            .get_batch_layouts(&[0])
-            .map_err(|e| ZTProducerErr::DatasetError {
-                idx: 0.into(),
-                source: e,
-            })?
-            .keys()
-            .map(|x| *x)
+        let layout = if let Some(s) = dataset.static_layouts() {
+            s
+        } else {
+            &dataset
+                .dynamic_layouts(&[0])
+                .map_err(|e| ZTProducerErr::DatasetError {
+                    idx: 0.into(),
+                    source: e,
+                })?
+        };
+        let keys: Vec<&str> = layout.keys().map(|x| *x).collect();
+        let tensors_per_sample = keys.len();
+        let mut caches: Vec<Mutex<TensorWriterCache<'_>>> = (0..batch_size)
+            .map(|_| Mutex::new(TensorWriterCache::with_capacity(tensors_per_sample)))
             .collect();
 
         match self.next_command(&mut reader, &mut buf)? {
@@ -420,6 +424,10 @@ impl ZeroTensorProducer {
             let (single_layouts, batch_layouts, element_size_bytes, total_data_bytes) =
                 helpers::prepare_batch_metadata(dataset, batch_indices)?;
 
+            let caches_ref: &mut [Mutex<TensorWriterCache<'_>>] = unsafe {
+                std::mem::transmute(&mut *caches)
+            };
+
             helpers::copy_batch_to_shm(
                 &mut self.buffer,
                 &self.running,
@@ -430,7 +438,12 @@ impl ZeroTensorProducer {
                 &batch_layouts,
                 element_size_bytes,
                 total_data_bytes,
+                caches_ref
             )?;
+
+            for cache_mutex in caches.iter_mut() {
+                cache_mutex.get_mut().clear();
+            }
 
             self.buffer.set_slot_ready(offset);
 
@@ -438,7 +451,7 @@ impl ZeroTensorProducer {
         }
     }
 
-    pub fn start_streaming<'a, D: ZeroTensorDataset>(
+    pub fn start_streaming<'a, D: ZeroTensorDataset<'a>>(
         &'a mut self,
         dataset: &'a D,
         batch_size: usize,

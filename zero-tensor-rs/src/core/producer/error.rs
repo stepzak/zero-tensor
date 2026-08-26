@@ -6,7 +6,7 @@ use crate::{
     core::{
         buffer::ZTBufErr,
         dataset::{ZTDatasetError, item::TensorViewError},
-        writer::{TensorWriterError},
+        writer::TensorWriterError,
     },
     pipeline::PipelineError,
 };

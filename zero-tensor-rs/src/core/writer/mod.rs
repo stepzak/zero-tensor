@@ -1,35 +1,49 @@
+pub mod cache;
 pub mod error;
 
 use indexmap::IndexMap;
-use std::collections::HashSet;
+use std::mem::size_of;
+
+use crate::core::buffer::tensor_meta::TensorHeader;
+use crate::core::dataset::item::{ShapeType, StrideType};
 
 use super::dataset::item::TensorBatchLayout;
 use super::helpers::align_to;
 
+pub use cache::TensorWriterCache;
 pub use error::*;
 
-type Offset = usize;
-type Size = usize;
-
-pub struct TensorWriter<'a> {
-    slot_buffers: IndexMap<&'a str, (Offset, Size)>,
-    slot_buffer: &'a mut [u8],
-    written: HashSet<&'a str>,
+pub struct TensorWriter<'a, 'b, 'c> {
+    slot_buffer: &'c mut [u8],
+    cache: &'b mut TensorWriterCache<'a>,
+    metadata_size: usize,
 }
 
-impl<'a> TensorWriter<'a> {
+impl<'a, 'b, 'c> TensorWriter<'a, 'b, 'c> {
     pub const ALIGNMENT: usize = 64;
 
     pub fn new(
         layouts: &IndexMap<&'a str, TensorBatchLayout>,
-        slot_buffer: &'a mut [u8],
+        slot_buffer: &'c mut [u8],
+        cache: &'b mut TensorWriterCache<'a>,
     ) -> Result<Self, TensorWriterError> {
-        let mut im = IndexMap::new();
-        let mut acc = 0usize;
+        cache.clear();
+
+        let metadata_size = layouts
+            .iter()
+            .map(|(_, v)| {
+                let ndims = v.shape().len();
+                let size = size_of::<TensorHeader>()
+                    + ndims * (size_of::<StrideType>() + size_of::<ShapeType>());
+                align_to(size, Self::ALIGNMENT)
+            })
+            .sum::<usize>();
+
+        let mut acc = metadata_size;
 
         for (&k, v) in layouts {
             let size = align_to(v.total_bytes(), Self::ALIGNMENT);
-            im.insert(k, (acc, size));
+            cache.insert(k, acc, size);
             acc += size;
         }
 
@@ -40,17 +54,19 @@ impl<'a> TensorWriter<'a> {
             });
         }
 
-        let l = im.len();
-
         Ok(TensorWriter {
-            slot_buffers: im,
+            cache,
             slot_buffer,
-            written: HashSet::with_capacity(l),
-        }) //TODO: think about smallvec if the keys are few
+            metadata_size,
+        })
+    }
+
+    pub fn data_offset(&self) -> usize {
+        self.metadata_size
     }
 
     pub fn get_offset_size(&self, key: &str) -> Option<(usize, usize)> {
-        self.slot_buffers.get(key).copied()
+        self.cache.get_offset_size(key)
     }
 
     pub fn write<F, E>(
@@ -62,14 +78,15 @@ impl<'a> TensorWriter<'a> {
         F: FnOnce(&mut [u8]) -> Result<usize, E>,
         E: std::error::Error,
     {
-        if self.written.contains(key) {
+        let (offset, size) = self
+            .cache
+            .get_offset_size(key)
+            .ok_or(TensorWriteError::UnknownKey(key))?;
+
+        let idx = self.cache.slot_buffers().get_key_pos(key).unwrap();
+        if self.cache.written()[idx] {
             return Err(TensorWriteError::KeyExists(key));
         }
-
-        let &(offset, size) = self
-            .slot_buffers
-            .get(key)
-            .ok_or(TensorWriteError::UnknownKey(key))?;
 
         if offset + size > self.slot_buffer.len() {
             return Err(TensorWriteError::BufferOutOfBounds {
@@ -95,22 +112,16 @@ impl<'a> TensorWriter<'a> {
             buf[written..].fill(0);
         }
 
-        self.written.insert(key);
+        self.cache.mark_written(key);
         Ok(written)
     }
 
     pub fn finalize(&self) -> Result<(), TensorWriterError> {
-        if self.slot_buffers.len() == self.written.len() {
+        if self.cache.is_fully_written() {
             return Ok(());
         }
 
-        let missing: Vec<String> = self
-            .slot_buffers
-            .keys()
-            .copied()
-            .filter(|k| !self.written.contains(k))
-            .map(|x| x.to_string())
-            .collect();
+        let missing = self.cache.get_missing_keys();
 
         if !missing.is_empty() {
             return Err(TensorWriterError::MissingKeys(missing));

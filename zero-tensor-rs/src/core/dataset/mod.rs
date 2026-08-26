@@ -19,19 +19,30 @@ impl ZTDatasetError for std::io::Error {
     }
 }
 
-pub trait ZeroTensorDataset: Send + Sync {
+pub trait ZeroTensorDataset<'data>: Send + Sync {
     type Error: ZTDatasetError;
 
     fn len(&self) -> usize;
 
-    /// # Safety contract
-    /// Must return `Ok(bytes_written)` if the write operation was a success
-    fn write_item_into(&self, idx: usize, writer: &mut TensorWriter) -> Result<(), Self::Error>;
+    fn write_item_into<'layout, 'b, 'c>(
+        &self, 
+        idx: usize, 
+        writer: &mut TensorWriter<'layout, 'b, 'c>
+    ) -> Result<(), Self::Error>;
 
-    fn get_batch_layouts(
+    fn static_layouts(&self) -> Option<&IndexMap<&'static str, TensorBatchLayout>> {
+        None
+    }
+
+    fn dynamic_layouts(
         &self,
         idxs: &[usize],
-    ) -> Result<IndexMap<&str, TensorBatchLayout>, Self::Error>;
+    ) -> Result<IndexMap<&'data str, TensorBatchLayout>, Self::Error> {
+        let _ = idxs;
+        unimplemented!("Either static_layouts() or dynamic_layouts() must be implemented")
+    }
 
-    fn is_empty(&self) -> bool;
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
