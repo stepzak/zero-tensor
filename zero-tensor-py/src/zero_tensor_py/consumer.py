@@ -47,6 +47,7 @@ class ZeroTensorConsumer:
         self._release_tail = 0
         self._current_slot_idx = 0
         self._pending_releases = None
+        self._keys = None
 
     def _parse_handshake(self, handshake_str: str):
         parts = handshake_str.strip().split()
@@ -113,6 +114,7 @@ class ZeroTensorConsumer:
             self._pending_releases: collections.deque[tuple[int, torch.cuda.Event]] = collections.deque()
             self._release_tail = self._load_tail()
             self._current_slot_idx = None
+            self._keys = self.handshake_dict["keys"]
             
         except Exception as e:
             self.close()

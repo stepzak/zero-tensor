@@ -23,7 +23,7 @@ impl<'a> TensorWriter<'a> {
     pub fn new(
         layouts: &IndexMap<&'a str, TensorBatchLayout>,
         slot_buffer: &'a mut [u8],
-    ) -> Result<Self, TensorWriterError<'a>> {
+    ) -> Result<Self, TensorWriterError> {
         let mut im = IndexMap::new();
         let mut acc = 0usize;
 
@@ -99,16 +99,17 @@ impl<'a> TensorWriter<'a> {
         Ok(written)
     }
 
-    pub fn finalize(&self) -> Result<(), TensorWriterError<'a>> {
+    pub fn finalize(&self) -> Result<(), TensorWriterError> {
         if self.slot_buffers.len() == self.written.len() {
             return Ok(());
         }
 
-        let missing: Vec<&str> = self
+        let missing: Vec<String> = self
             .slot_buffers
             .keys()
             .copied()
             .filter(|k| !self.written.contains(k))
+            .map(|x| x.to_string())
             .collect();
 
         if !missing.is_empty() {

@@ -24,7 +24,7 @@ fn test_writer_happy_path_and_alignment() {
     layouts.insert("b", mock_layout(20));
 
     let mut buffer = vec![0u8; 128];
-    let mut writer = TensorWriter::new(layouts, &mut buffer).unwrap();
+    let mut writer = TensorWriter::new(&layouts, &mut buffer).unwrap();
     let written_a = writer
         .write("a", |buf| -> Result<usize, std::io::Error> {
             buf[0..5].copy_from_slice(b"hello");
@@ -56,7 +56,7 @@ fn test_writer_buffer_too_small_on_creation() {
     layouts.insert("a", mock_layout(100));
 
     let mut buffer = vec![0u8; 64];
-    let result = TensorWriter::new(layouts, &mut buffer);
+    let result = TensorWriter::new(&layouts, &mut buffer);
 
     assert!(matches!(
         result,
@@ -72,7 +72,7 @@ fn test_writer_unknown_key() {
     let mut layouts = IndexMap::new();
     layouts.insert("a", mock_layout(10));
     let mut buffer = vec![0u8; 64];
-    let mut writer = TensorWriter::new(layouts, &mut buffer).unwrap();
+    let mut writer = TensorWriter::new(&layouts, &mut buffer).unwrap();
 
     let result = writer.write("unknown_key", |_| -> Result<usize, std::io::Error> {
         Ok(0)
@@ -88,7 +88,7 @@ fn test_writer_key_exists_duplicate_write() {
     let mut layouts = IndexMap::new();
     layouts.insert("a", mock_layout(10));
     let mut buffer = vec![0u8; 64];
-    let mut writer = TensorWriter::new(layouts, &mut buffer).unwrap();
+    let mut writer = TensorWriter::new(&layouts, &mut buffer).unwrap();
 
     writer
         .write("a", |_| -> Result<usize, std::io::Error> { Ok(5) })
@@ -103,7 +103,7 @@ fn test_writer_closure_lies_about_written_bytes() {
     let mut layouts = IndexMap::new();
     layouts.insert("a", mock_layout(10));
     let mut buffer = vec![0u8; 64];
-    let mut writer = TensorWriter::new(layouts, &mut buffer).unwrap();
+    let mut writer = TensorWriter::new(&layouts, &mut buffer).unwrap();
 
     let result = writer.write("a", |_| -> Result<usize, std::io::Error> { Ok(100) });
     println!("{result:?}");
@@ -122,7 +122,7 @@ fn test_writer_propagates_dataset_error() {
     let mut layouts = IndexMap::new();
     layouts.insert("a", mock_layout(10));
     let mut buffer = vec![0u8; 64];
-    let mut writer = TensorWriter::new(layouts, &mut buffer).unwrap();
+    let mut writer = TensorWriter::new(&layouts, &mut buffer).unwrap();
 
     let result = writer.write("a", |_| Err(DummyDatasetError));
 
@@ -137,7 +137,7 @@ fn test_finalize_missing_keys() {
     layouts.insert("c", mock_layout(10));
 
     let mut buffer = vec![0u8; 192];
-    let mut writer = TensorWriter::new(layouts, &mut buffer).unwrap();
+    let mut writer = TensorWriter::new(&layouts, &mut buffer).unwrap();
 
     writer
         .write("a", |_| -> Result<usize, std::io::Error> { Ok(10) })
@@ -148,7 +148,7 @@ fn test_finalize_missing_keys() {
 
     let result = writer.finalize();
     assert!(
-        matches!(result, Err(TensorWriterError::MissingKeys(ref keys)) if keys.contains(&"b") && keys.len() == 1)
+        matches!(result, Err(TensorWriterError::MissingKeys(ref keys)) if keys.contains(&"b".into()) && keys.len() == 1)
     );
 }
 
@@ -159,7 +159,7 @@ fn test_finalize_success_fast_path() {
     layouts.insert("b", mock_layout(10));
 
     let mut buffer = vec![0u8; 128];
-    let mut writer = TensorWriter::new(layouts, &mut buffer).unwrap();
+    let mut writer = TensorWriter::new(&layouts, &mut buffer).unwrap();
 
     writer
         .write("a", |_| -> Result<usize, std::io::Error> { Ok(10) })

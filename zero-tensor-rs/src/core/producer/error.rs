@@ -4,8 +4,11 @@ use thiserror::Error;
 
 use crate::{
     core::{
-        buffer::ZTBufErr, dataset::{ZTDatasetError, item::TensorViewError}, writer::{TensorWriteError, TensorWriterError},
-    }, pipeline::PipelineError,
+        buffer::ZTBufErr,
+        dataset::{ZTDatasetError, item::TensorViewError},
+        writer::{TensorWriterError},
+    },
+    pipeline::PipelineError,
 };
 
 #[derive(Debug, Error)]
@@ -18,7 +21,7 @@ pub enum ZTProducerNewErr {
 }
 
 #[derive(Debug, Error)]
-pub enum ZTProducerErr<'a, E: ZTDatasetError + 'static> {
+pub enum ZTProducerErr<E: ZTDatasetError + 'static> {
     #[error("ZT Buffer Error: {0}")]
     ZTBufferError(#[from] ZTBufErr),
 
@@ -41,9 +44,6 @@ pub enum ZTProducerErr<'a, E: ZTDatasetError + 'static> {
     #[error("Tensor View conv error {0}")]
     TensorViewError(#[from] TensorViewError),
 
-    #[error("Tensor Write error: {0}")]
-    TensorWriteError(TensorWriteError<'a, E>),
-
     #[error("Tensor WriteR error: {0}")]
-    TensorWriterError(TensorWriterError<'a>)
+    TensorWriterError(TensorWriterError),
 }

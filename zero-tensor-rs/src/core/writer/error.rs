@@ -25,12 +25,12 @@ pub enum TensorWriteError<'a, E> {
 }
 
 #[derive(Error, Debug)]
-pub enum TensorWriterError<'a> {
+pub enum TensorWriterError {
     #[error(
         "Failed to create writer: invalid layout. Required size: {required}, available: {available}"
     )]
     BufferTooSmall { required: usize, available: usize },
 
     #[error("Finalization failed. Missing keys: {0:?}")]
-    MissingKeys(Vec<&'a str>),
+    MissingKeys(Vec<String>),
 }

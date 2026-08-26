@@ -185,7 +185,7 @@ impl ZeroTensorBuffer {
         offset: usize,
         shape: &[ShapeType],
         strides: &[StrideType],
-        dt: TensorDT
+        dt: TensorDT,
     ) -> Result<(), ZTBufErr> {
         self.write_tensor(offset, shape, strides, dt, &[])
     }

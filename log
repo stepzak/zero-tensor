@@ -1,0 +1,14 @@
+   Compiling zero-tensor-lib v0.5.0 (/home/zakatinstepan/RustProjects/zero-tensor-lib/zero-tensor-rs)
+error[E0499]: cannot borrow `*buffer` as mutable more than once at a time
+   --> zero-tensor-rs/src/core/producer/helpers.rs:161:30
+    |
+132 |     let raw_shm_slice = unsafe { buffer.get_item_slice_mut(slot_offset, 0, total_data_bytes) }?;
+    |                                  ------ first mutable borrow occurs here
+...
+161 |     write_metadata_to_buffer(buffer, batch_layouts, &meta_writer, slot_offset)
+    |                              ^^^^^^                 ------------ first borrow later used here
+    |                              |
+    |                              second mutable borrow occurs here
+
+For more information about this error, try `rustc --explain E0499`.
+error: could not compile `zero-tensor-lib` (lib) due to 1 previous error
