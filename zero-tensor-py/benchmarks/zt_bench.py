@@ -19,6 +19,7 @@ def benchmark_zero_tensor():
     counter = 0
     with ZeroTensorConsumer(socket_path, shm_name) as consumer:
         for batch in consumer:
+            batch = batch["data"]
             total_bytes += batch.nbytes
             counter += 1
             _ = batch[0, 0, 0, 0].item()
