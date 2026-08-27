@@ -213,15 +213,15 @@ impl ZeroTensorBuffer {
         let data_size = get_dt_size(dt) * data_count;
         let t_size = offset + offs.data() + data_size;
         if t_size > self.total_size {
+            println!("err write");
+
             return Err(ZTBufErr::BufferOverflow(self.total_size, t_size));
         }
 
         let header_ptr = base as *mut TensorHeader;
         unsafe { header_ptr.write(meta) };
-
         let shape_ptr = unsafe { base.add(offs.shapes()) as *mut ShapeType };
         unsafe { ptr::copy_nonoverlapping(shape.as_ptr(), shape_ptr, ndims as usize) };
-
         let strides_ptr = unsafe { base.add(offs.strides()) as *mut StrideType };
         unsafe {
             ptr::copy_nonoverlapping(strides.as_ptr(), strides_ptr, ndims as usize);
@@ -246,6 +246,7 @@ impl ZeroTensorBuffer {
     ) -> Result<&mut [u8], ZTBufErr> {
         let t_size = slot_offset + data_offset_in_slot + len;
         if t_size > self.total_size {
+            println!("err slice mut");
             return Err(ZTBufErr::BufferOverflow(self.total_size, t_size));
         }
         let ptr = unsafe { self.addr.add(slot_offset).add(data_offset_in_slot) };
@@ -260,6 +261,7 @@ impl ZeroTensorBuffer {
     ) -> Result<&[u8], ZTBufErr> {
         let t_size = slot_offset + data_offset_in_slot + len;
         if t_size > self.total_size {
+            println!("err 1");
             return Err(ZTBufErr::BufferOverflow(self.total_size, t_size));
         }
         let ptr = unsafe { self.addr.add(slot_offset).add(data_offset_in_slot) };

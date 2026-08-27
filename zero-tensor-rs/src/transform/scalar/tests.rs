@@ -416,7 +416,6 @@ fn nan_to_f16() {
 #[test]
 fn infinity_to_f16() {
     let result = half::f16::try_from(Scalar::F64(f64::INFINITY));
-    println!("{result:?}");
     assert!(result.is_ok());
     assert!(result.unwrap().is_infinite());
 }

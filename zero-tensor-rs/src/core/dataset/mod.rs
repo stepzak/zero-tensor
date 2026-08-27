@@ -25,9 +25,9 @@ pub trait ZeroTensorDataset<'data>: Send + Sync {
     fn len(&self) -> usize;
 
     fn write_item_into<'layout, 'b, 'c>(
-        &self, 
-        idx: usize, 
-        writer: &mut TensorWriter<'layout, 'b, 'c>
+        &self,
+        idx: usize,
+        writer: &mut TensorWriter<'layout, 'b, 'c>,
     ) -> Result<(), Self::Error>;
 
     fn static_layouts(&self) -> Option<&IndexMap<&'static str, TensorBatchLayout>> {

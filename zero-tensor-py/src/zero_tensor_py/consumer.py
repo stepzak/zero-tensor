@@ -255,33 +255,61 @@ class ZeroTensorConsumer:
             current_meta_offset += self.header_size
 
             fmt = self._shape_fmt_char * ndims
-            shape = struct.unpack_from(f"<{fmt}", self.mem, current_meta_offset)
+            shape = list(struct.unpack_from(f"<{fmt}", self.mem, current_meta_offset))
             current_meta_offset += ndims * self.shape_type_size
 
             stride_fmt = self._stride_fmt_char * ndims
-            strides = struct.unpack_from(f"<{stride_fmt}", self.mem, current_meta_offset)
+            strides = list(struct.unpack_from(f"<{stride_fmt}", self.mem, current_meta_offset))
             current_meta_offset += ndims * self.stride_type_size
 
             dtype = DT_MAP[dt]
+            
+            batch_size = shape[0]
+            item_shape = shape[1:] if len(shape) > 1 else shape
+            item_strides = strides[1:] if len(strides) > 1 else strides
+            
             numel = 1
-            for d in shape:
+            for d in item_shape:
                 numel *= d
-            data_size = numel * dtype.itemsize
-
-            structure.append((dtype, shape, strides, data_size))
+            item_data_size = numel * dtype.itemsize
+            
+            structure.append((dtype, item_shape, item_strides, item_data_size, batch_size))
 
             block_size = self._metadata_block_size(ndims)
             total_meta_size += block_size
             current_meta_offset = slot_offset + total_meta_size
 
         data_start = slot_offset + total_meta_size
-        current_data_offset = data_start
+        
+        data_size_per_item = sum(
+            _align_to(item_data_size, self.slot_alignment)
+            for _, _, _, item_data_size, _ in structure
+        )
 
-        for key, (dtype, shape, strides, data_size) in zip(self._keys, structure):
-            raw_view = memoryview(self.mem)[current_data_offset:current_data_offset + data_size]
+        total_data_size = data_size_per_item * structure[0][4]
+        raw_view = memoryview(self.mem)[data_start:data_start + total_data_size]
+        
+        current_key_offset_bytes = 0
+        for key_idx, key in enumerate(self._keys):
+            dtype, item_shape, item_strides, item_data_size, batch_size = structure[key_idx]
+            
+            storage_offset_elements = current_key_offset_bytes // dtype.itemsize
+            
+            batch_stride_elements = data_size_per_item // dtype.itemsize
+            
             flat_tensor = torch.frombuffer(raw_view, dtype=dtype)
-            tensors[key] = torch.as_strided(flat_tensor, shape, strides)
-            current_data_offset += _align_to(data_size, self.slot_alignment)
+            
+            batch_shape = [batch_size] + list(item_shape)
+            batch_strides = [batch_stride_elements] + list(item_strides)
+            
+            tensors[key] = torch.as_strided(
+                flat_tensor,
+                batch_shape,
+                batch_strides,
+                storage_offset=storage_offset_elements
+            )
+            
+            current_key_offset_bytes += _align_to(item_data_size, self.slot_alignment)
 
         return tensors
 

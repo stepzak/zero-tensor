@@ -1,9 +1,9 @@
-use crate::core::writer::TensorWriter;
 use crate::core::dataset::item::{TensorBatchLayout, TensorDT};
+use crate::core::writer::TensorWriter;
 use indexmap::IndexMap;
-use tempfile::tempdir;
 use std::thread;
 use std::time::Duration;
+use tempfile::tempdir;
 
 use super::*;
 
@@ -31,11 +31,10 @@ impl<'a> ZeroTensorDataset<'a> for FailingDataset {
     }
 
     fn write_item_into<'layout, 'b, 'c>(
-        &self, 
-        _idx: usize, 
-        _writer: &mut TensorWriter<'layout, 'b, 'c>
-    ) -> Result<(), Self::Error>
-    {
+        &self,
+        _idx: usize,
+        _writer: &mut TensorWriter<'layout, 'b, 'c>,
+    ) -> Result<(), Self::Error> {
         Ok(())
     }
 }
@@ -61,7 +60,7 @@ fn test_dataset_failure() {
 
         let mut stream = match UnixStream::connect(&consumer_socket) {
             Ok(s) => s,
-            Err(_) => return, 
+            Err(_) => return,
         };
 
         let _ = ZeroTensorBuffer::open(&consumer_shm_name, 2048 * 2)
@@ -87,7 +86,6 @@ fn test_dataset_failure() {
 
     assert!(res.is_err(), "Expected dataset error, got {:?}", res);
 }
-
 
 #[test]
 fn test_raii_producer_cleans_up_socket_on_drop() {
@@ -153,7 +151,7 @@ fn test_producer_detects_dead_consumer() {
     let shm_name = "zt_death_test_shm";
 
     struct TinyDataset;
-    
+
     impl<'a> ZeroTensorDataset<'a> for TinyDataset {
         type Error = std::io::Error;
 
@@ -168,9 +166,8 @@ fn test_producer_detects_dead_consumer() {
         fn dynamic_layouts(
             &self,
             _idxs: &[usize],
-        ) -> Result<IndexMap<&'a str, TensorBatchLayout>, Self::Error>
-        {
-             let mut layouts = IndexMap::new();
+        ) -> Result<IndexMap<&'a str, TensorBatchLayout>, Self::Error> {
+            let mut layouts = IndexMap::new();
             layouts.insert(
                 "data",
                 TensorBatchLayout::new(vec![4].into(), vec![1].into(), TensorDT::F32),
@@ -179,11 +176,10 @@ fn test_producer_detects_dead_consumer() {
         }
 
         fn write_item_into<'layout, 'b, 'c>(
-            &self, 
-            _idx: usize, 
-            writer: &mut TensorWriter<'layout, 'b, 'c>
-        ) -> Result<(), Self::Error>
-        {
+            &self,
+            _idx: usize,
+            writer: &mut TensorWriter<'layout, 'b, 'c>,
+        ) -> Result<(), Self::Error> {
             writer
                 .write("data", |buf| {
                     buf[..16].fill(0);
@@ -268,7 +264,7 @@ fn test_multi_tensor_dataset() {
     let shm_name = "zt_multi_tensor_shm";
 
     struct MultiTensorDataset;
-    
+
     impl<'a> ZeroTensorDataset<'a> for MultiTensorDataset {
         type Error = std::io::Error;
 
@@ -297,11 +293,10 @@ fn test_multi_tensor_dataset() {
         }
 
         fn write_item_into<'layout, 'b, 'c>(
-            &self, 
-            idx: usize, 
-            writer: &mut TensorWriter<'layout, 'b, 'c>
-        ) -> Result<(), Self::Error>
-        {
+            &self,
+            idx: usize,
+            writer: &mut TensorWriter<'layout, 'b, 'c>,
+        ) -> Result<(), Self::Error> {
             writer
                 .write("image", |buf| {
                     let floats: &mut [f32] = bytemuck::cast_slice_mut(&mut buf[..16]);

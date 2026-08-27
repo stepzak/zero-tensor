@@ -1,6 +1,7 @@
 use std::process::Command;
 use std::thread;
 use std::time::Duration;
+use indexmap::IndexMap;
 use tempfile::tempdir;
 use zero_tensor_lib::core::{
     buffer::get_dt_size,
@@ -39,7 +40,7 @@ impl DynamicDataset {
     }
 }
 
-impl ZeroTensorDataset for DynamicDataset {
+impl<'a> ZeroTensorDataset<'a> for DynamicDataset {
     type Error = TestError;
 
     fn len(&self) -> usize {
@@ -50,12 +51,15 @@ impl ZeroTensorDataset for DynamicDataset {
         self.len() == 0
     }
 
-    fn get_batch_layout(&self, indices: &[usize]) -> Result<TensorBatchLayout, Self::Error> {
-        if indices.is_empty() {
+    fn dynamic_layouts(
+        &self,
+        idxs: &[usize],
+    ) -> Result<indexmap::IndexMap<&'a str, TensorBatchLayout>, Self::Error> {
+        if idxs.is_empty() {
             return Err(TestError("Empty batch".into()));
         }
 
-        let (max_h, max_w) = indices
+        let (max_h, max_w) = idxs
             .iter()
             .map(|&i| self.shapes[i])
             .fold((0, 0), |(mh, mw), (h, w)| (mh.max(h), mw.max(w)));
@@ -68,24 +72,36 @@ impl ZeroTensorDataset for DynamicDataset {
         strides.push(max_w);
         strides.push(1);
 
-        Ok(TensorBatchLayout::new(shape, strides, TensorDT::F32))
+        let layout = TensorBatchLayout::new(shape, strides, TensorDT::F32);
+        let mut im = IndexMap::new();
+        im.insert("data", layout);
+        Ok(im)
     }
 
-    fn write_item_into(&self, idx: usize, buf: &mut [u8]) -> Result<usize, Self::Error> {
-        let (h, w) = self.shapes[idx];
-        let total_els = (h * w) as usize;
+    fn write_item_into<'layout, 'b, 'c>(
+        &self,
+        idx: usize,
+        writer: &mut zero_tensor_lib::core::writer::TensorWriter<'layout, 'b, 'c>,
+    ) -> Result<(), Self::Error>
+    {
+        let _ =writer.write("data", |buf| -> Result<usize, std::io::Error> {
+            let (h, w) = self.shapes[idx];
+            let total_els = (h * w) as usize;
 
-        let f32_buf =
-            unsafe { std::slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut f32, total_els) };
-        let mut bytes_written = 0;
-        for r in 0..h {
-            for c in 0..w {
-                f32_buf[(r * w + c) as usize] = (r * 10 + c + idx * 100) as f32;
-                bytes_written += size_of::<f32>();
+            let f32_buf =
+                unsafe { std::slice::from_raw_parts_mut(buf.as_mut_ptr() as *mut f32, total_els) };
+            let mut bytes_written = 0;
+            for r in 0..h {
+                for c in 0..w {
+                    f32_buf[(r * w + c) as usize] = (r * 10 + c + idx * 100) as f32;
+                    bytes_written += size_of::<f32>();
+                }
             }
-        }
-        Ok(bytes_written)
+            Ok(bytes_written)
+        });
+        Ok(())
     }
+      
 }
 
 #[test]

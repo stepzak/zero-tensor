@@ -6,7 +6,10 @@ mod tests;
 pub use error::*;
 use parking_lot::Mutex;
 
-use crate::core::writer::TensorWriterCache;
+use crate::core::{
+    dataset::item::StrideType,
+    writer::{TensorWriter, TensorWriterCache},
+};
 
 use super::{
     buffer::{ZeroTensorBuffer, control_block::ZeroTensorControlBlock, tensor_meta::TensorHeader},
@@ -272,6 +275,9 @@ impl ZeroTensorProducer {
             .add_key("is_ready_offset", TensorHeader::is_ready_offset())
             .add_key("is_ready_size", size_of::<AtomicU8>())
             .add_key("shape_type_size", size_of::<ShapeType>())
+            .add_key("header_size", size_of::<TensorHeader>())
+            .add_key("slot_alignment", TensorWriter::ALIGNMENT)
+            .add_key("stride_type_size", size_of::<StrideType>())
             .add_key("keys", joined_keys)
             .build();
 
@@ -421,12 +427,11 @@ impl ZeroTensorProducer {
             let slot_idx = (cur_head % cb.nslots()) as usize;
             let offset = ZeroTensorControlBlock::slot_offset(slot_idx, cb.slot_size() as usize);
 
-            let (single_layouts, batch_layouts, element_size_bytes, total_data_bytes) =
+            let (single_layouts, batch_layouts, element_size_bytes, meta, total_data_bytes) =
                 helpers::prepare_batch_metadata(dataset, batch_indices)?;
 
-            let caches_ref: &mut [Mutex<TensorWriterCache<'_>>] = unsafe {
-                std::mem::transmute(&mut *caches)
-            };
+            let caches_ref: &mut [Mutex<TensorWriterCache<'_>>] =
+                unsafe { std::mem::transmute(&mut *caches) };
 
             helpers::copy_batch_to_shm(
                 &mut self.buffer,
@@ -437,8 +442,9 @@ impl ZeroTensorProducer {
                 &single_layouts,
                 &batch_layouts,
                 element_size_bytes,
+                meta,
                 total_data_bytes,
-                caches_ref
+                caches_ref,
             )?;
 
             for cache_mutex in caches.iter_mut() {

@@ -12,6 +12,7 @@ def main():
         for epoch in range(3):
             step = 0
             for batch in consumer:
+                batch = batch["data"]
                 b, h, w = batch.shape
                 assert b == batch_size, f"Step {step}: Expected B={batch_size}, got {b}"
                 

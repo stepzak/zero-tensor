@@ -32,12 +32,10 @@ fn test_single_tensor_happy_path() {
     let mut layouts = IndexMap::new();
     layouts.insert("data", mock_layout(100));
 
-    let mut buffer = vec![0u8; 192];
+    let mut buffer = vec![0u8; 128];
 
     let mut cache = TensorWriterCache::with_capacity(1);
     let mut writer = TensorWriter::new(&layouts, &mut buffer, &mut cache).unwrap();
-
-    assert_eq!(writer.data_offset(), 64);
 
     let written = writer
         .write("data", |buf| -> Result<usize, std::io::Error> {
@@ -49,8 +47,8 @@ fn test_single_tensor_happy_path() {
     assert_eq!(written, 100);
     writer.finalize().unwrap();
 
-    assert_eq!(&buffer[64..164], &[42u8; 100]);
-    assert_eq!(&buffer[164..192], &[0u8; 28]);
+    assert_eq!(&buffer[0..100], &[42u8; 100]);
+    assert_eq!(&buffer[100..128], &[0u8; 28]);
 }
 
 #[test]
@@ -59,12 +57,10 @@ fn test_multiple_tensors_happy_path() {
     layouts.insert("image", mock_layout(100));
     layouts.insert("label", mock_layout(10));
 
-    let mut buffer = vec![0u8; 320];
+    let mut buffer = vec![0u8; 192];
     {
         let mut cache = TensorWriterCache::with_capacity(2);
         let mut writer = TensorWriter::new(&layouts, &mut buffer, &mut cache).unwrap();
-
-        assert_eq!(writer.data_offset(), 128);
 
         writer
             .write("image", |buf| -> Result<usize, std::io::Error> {
@@ -82,30 +78,12 @@ fn test_multiple_tensors_happy_path() {
 
         writer.finalize().unwrap();
     }
-    assert_eq!(&buffer[128..228], &[1u8; 100]);
-    assert_eq!(&buffer[256..266], &[2u8; 10]);
-}
-
-#[test]
-fn test_metadata_alignment() {
-    let mut layouts = IndexMap::new();
-    layouts.insert("a", mock_layout(10));
-    layouts.insert("b", mock_layout(20));
-    layouts.insert("c", mock_layout(30));
-
-    let mut buffer = vec![0u8; 1024];
-    let mut cache = TensorWriterCache::with_capacity(3);
-    let writer = TensorWriter::new(&layouts, &mut buffer, &mut cache).unwrap();
-
-    assert_eq!(writer.data_offset(), 192);
-
-    let (off_a, _) = writer.get_offset_size("a").unwrap();
-    let (off_b, _) = writer.get_offset_size("b").unwrap();
-    let (off_c, _) = writer.get_offset_size("c").unwrap();
-
-    assert_eq!(off_a, 192);
-    assert_eq!(off_b, 192 + 64);
-    assert_eq!(off_c, 192 + 64 + 64);
+    
+    assert_eq!(&buffer[0..100], &[1u8; 100]);
+    assert_eq!(&buffer[100..128], &[0u8; 28]);
+    
+    assert_eq!(&buffer[128..138], &[2u8; 10]);
+    assert_eq!(&buffer[138..192], &[0u8; 54]);
 }
 
 #[test]
@@ -115,7 +93,7 @@ fn test_data_alignment() {
     layouts.insert("medium", mock_layout(100));
     layouts.insert("large", mock_layout(1000));
 
-    let mut buffer = vec![0u8; 4096];
+    let mut buffer = vec![0u8; 1216];
     let mut cache = TensorWriterCache::with_capacity(3);
     let writer = TensorWriter::new(&layouts, &mut buffer, &mut cache).unwrap();
 
@@ -131,9 +109,14 @@ fn test_data_alignment() {
     assert_eq!(size_medium % 64, 0);
     assert_eq!(size_large % 64, 0);
 
+    assert_eq!(off_small, 0);
     assert_eq!(size_small, 64);
-    assert_eq!(size_medium, 128);
-    assert_eq!(size_large, 1024);
+    
+    assert_eq!(off_medium, 64);
+    assert_eq!(size_medium, 128); 
+    
+    assert_eq!(off_large, 192);
+    assert_eq!(size_large, 1024); 
 }
 
 #[test]
@@ -148,7 +131,7 @@ fn test_buffer_too_small() {
     assert!(matches!(
         result,
         Err(TensorWriterError::BufferTooSmall {
-            required: 192,
+            required: 128,
             available: 100
         })
     ));
@@ -159,7 +142,7 @@ fn test_unknown_key() {
     let mut layouts = IndexMap::new();
     layouts.insert("data", mock_layout(100));
 
-    let mut buffer = vec![0u8; 192];
+    let mut buffer = vec![0u8; 128];
     let mut cache = TensorWriterCache::with_capacity(1);
     let mut writer = TensorWriter::new(&layouts, &mut buffer, &mut cache).unwrap();
 
@@ -176,7 +159,7 @@ fn test_key_exists() {
     let mut layouts = IndexMap::new();
     layouts.insert("data", mock_layout(100));
 
-    let mut buffer = vec![0u8; 192];
+    let mut buffer = vec![0u8; 128];
     let mut cache = TensorWriterCache::with_capacity(1);
     let mut writer = TensorWriter::new(&layouts, &mut buffer, &mut cache).unwrap();
 
@@ -193,7 +176,7 @@ fn test_buffer_overflow() {
     let mut layouts = IndexMap::new();
     layouts.insert("data", mock_layout(100));
 
-    let mut buffer = vec![0u8; 192];
+    let mut buffer = vec![0u8; 128];
     let mut cache = TensorWriterCache::with_capacity(1);
     let mut writer = TensorWriter::new(&layouts, &mut buffer, &mut cache).unwrap();
 
@@ -214,7 +197,7 @@ fn test_dataset_error_propagation() {
     let mut layouts = IndexMap::new();
     layouts.insert("data", mock_layout(100));
 
-    let mut buffer = vec![0u8; 192];
+    let mut buffer = vec![0u8; 128];
     let mut cache = TensorWriterCache::with_capacity(1);
     let mut writer = TensorWriter::new(&layouts, &mut buffer, &mut cache).unwrap();
 
@@ -229,7 +212,7 @@ fn test_finalize_all_written() {
     layouts.insert("a", mock_layout(10));
     layouts.insert("b", mock_layout(20));
 
-    let mut buffer = vec![0u8; 320];
+    let mut buffer = vec![0u8; 128];
     let mut cache = TensorWriterCache::with_capacity(2);
     let mut writer = TensorWriter::new(&layouts, &mut buffer, &mut cache).unwrap();
 
@@ -250,7 +233,7 @@ fn test_finalize_missing_keys() {
     layouts.insert("b", mock_layout(20));
     layouts.insert("c", mock_layout(30));
 
-    let mut buffer = vec![0u8; 512];
+    let mut buffer = vec![0u8; 192];
     let mut cache = TensorWriterCache::with_capacity(3);
     let mut writer = TensorWriter::new(&layouts, &mut buffer, &mut cache).unwrap();
 
@@ -273,7 +256,7 @@ fn test_finalize_fast_path() {
     layouts.insert("a", mock_layout(10));
     layouts.insert("b", mock_layout(20));
 
-    let mut buffer = vec![0u8; 320];
+    let mut buffer = vec![0u8; 128];
     let mut cache = TensorWriterCache::with_capacity(2);
     let mut writer = TensorWriter::new(&layouts, &mut buffer, &mut cache).unwrap();
 
@@ -292,7 +275,7 @@ fn test_zero_padding_partial_write() {
     let mut layouts = IndexMap::new();
     layouts.insert("data", mock_layout(100));
 
-    let mut buffer = vec![0u8; 192];
+    let mut buffer = vec![0u8; 128];
 
     let mut cache = TensorWriterCache::with_capacity(1);
     let mut writer = TensorWriter::new(&layouts, &mut buffer, &mut cache).unwrap();
@@ -306,8 +289,8 @@ fn test_zero_padding_partial_write() {
 
     writer.finalize().unwrap();
 
-    assert_eq!(&buffer[64..114], &[99u8; 50]);
-    assert_eq!(&buffer[114..192], &[0u8; 78]);
+    assert_eq!(&buffer[0..50], &[99u8; 50]);
+    assert_eq!(&buffer[50..128], &[0u8; 78]);
 }
 
 #[test]
@@ -315,7 +298,7 @@ fn test_zero_padding_full_write() {
     let mut layouts = IndexMap::new();
     layouts.insert("data", mock_layout(64));
 
-    let mut buffer = vec![0u8; 128];
+    let mut buffer = vec![0u8; 64];
     let mut cache = TensorWriterCache::with_capacity(1);
     let mut writer = TensorWriter::new(&layouts, &mut buffer, &mut cache).unwrap();
 
@@ -327,8 +310,9 @@ fn test_zero_padding_full_write() {
         .unwrap();
 
     writer.finalize().unwrap();
-    assert_eq!(&buffer[64..128], &[77u8; 64]);
+    assert_eq!(&buffer[0..64], &[77u8; 64]);
 }
+
 
 #[test]
 fn test_different_dtypes() {
@@ -338,7 +322,7 @@ fn test_different_dtypes() {
     layouts.insert("u8", mock_layout_nd(vec![4], TensorDT::U8));
     layouts.insert("i64", mock_layout_nd(vec![4], TensorDT::I64));
 
-    let mut buffer = vec![0u8; 2048];
+    let mut buffer = vec![0u8; 256];
     let mut cache = TensorWriterCache::with_capacity(4);
     let mut writer = TensorWriter::new(&layouts, &mut buffer, &mut cache).unwrap();
 
@@ -404,7 +388,7 @@ fn test_cache_reuse() {
     let mut layouts = IndexMap::new();
     layouts.insert("data", mock_layout(100));
 
-    let mut buffer = vec![0u8; 192];
+    let mut buffer = vec![0u8; 128];
     let mut cache = TensorWriterCache::with_capacity(1);
 
     {
@@ -448,7 +432,7 @@ fn test_realistic_image_dataset() {
     layouts.insert("mask", mock_layout_nd(vec![224, 224], TensorDT::U8));
     layouts.insert("label", mock_layout_nd(vec![1], TensorDT::I32));
 
-    let size = 200960;
+    let size = 200768;
     let mut buffer = vec![0u8; size];
     let mut cache = TensorWriterCache::with_capacity(3);
     let mut writer = TensorWriter::new(&layouts, &mut buffer, &mut cache).unwrap();
@@ -480,8 +464,14 @@ fn test_realistic_image_dataset() {
     let (off_image, _) = writer.get_offset_size("image").unwrap();
     let (off_mask, _) = writer.get_offset_size("mask").unwrap();
     let (off_label, _) = writer.get_offset_size("label").unwrap();
+    
+    assert_eq!(off_image, 0);
     assert_eq!(buffer[off_image], 128);
+    
+    assert_eq!(off_mask, 150528);
     assert_eq!(buffer[off_mask], 255);
+    
+    assert_eq!(off_label, 200704);
     let label: i32 = bytemuck::pod_read_unaligned(&buffer[off_label..off_label + 4]);
     assert_eq!(label, 42);
 }

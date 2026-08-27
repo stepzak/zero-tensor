@@ -2,11 +2,6 @@ pub mod cache;
 pub mod error;
 
 use indexmap::IndexMap;
-use std::mem::size_of;
-
-use crate::core::buffer::tensor_meta::TensorHeader;
-use crate::core::dataset::item::{ShapeType, StrideType};
-
 use super::dataset::item::TensorBatchLayout;
 use super::helpers::align_to;
 
@@ -16,7 +11,6 @@ pub use error::*;
 pub struct TensorWriter<'a, 'b, 'c> {
     slot_buffer: &'c mut [u8],
     cache: &'b mut TensorWriterCache<'a>,
-    metadata_size: usize,
 }
 
 impl<'a, 'b, 'c> TensorWriter<'a, 'b, 'c> {
@@ -29,17 +23,7 @@ impl<'a, 'b, 'c> TensorWriter<'a, 'b, 'c> {
     ) -> Result<Self, TensorWriterError> {
         cache.clear();
 
-        let metadata_size = layouts
-            .iter()
-            .map(|(_, v)| {
-                let ndims = v.shape().len();
-                let size = size_of::<TensorHeader>()
-                    + ndims * (size_of::<StrideType>() + size_of::<ShapeType>());
-                align_to(size, Self::ALIGNMENT)
-            })
-            .sum::<usize>();
-
-        let mut acc = metadata_size;
+        let mut acc = 0;
 
         for (&k, v) in layouts {
             let size = align_to(v.total_bytes(), Self::ALIGNMENT);
@@ -57,12 +41,7 @@ impl<'a, 'b, 'c> TensorWriter<'a, 'b, 'c> {
         Ok(TensorWriter {
             cache,
             slot_buffer,
-            metadata_size,
         })
-    }
-
-    pub fn data_offset(&self) -> usize {
-        self.metadata_size
     }
 
     pub fn get_offset_size(&self, key: &str) -> Option<(usize, usize)> {
@@ -82,7 +61,6 @@ impl<'a, 'b, 'c> TensorWriter<'a, 'b, 'c> {
             .cache
             .get_offset_size(key)
             .ok_or(TensorWriteError::UnknownKey(key))?;
-
         let idx = self.cache.slot_buffers().get_key_pos(key).unwrap();
         if self.cache.written()[idx] {
             return Err(TensorWriteError::KeyExists(key));
@@ -99,7 +77,6 @@ impl<'a, 'b, 'c> TensorWriter<'a, 'b, 'c> {
         let buf = &mut self.slot_buffer[offset..offset + size];
 
         let written = write_fn(buf).map_err(|e| TensorWriteError::DatasetError { source: e })?;
-
         if written > size {
             return Err(TensorWriteError::BufferOutOfBounds {
                 key,
