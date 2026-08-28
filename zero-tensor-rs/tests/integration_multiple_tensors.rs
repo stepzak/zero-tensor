@@ -1,7 +1,7 @@
+use indexmap::IndexMap;
 use std::process::Command;
 use std::thread;
 use std::time::Duration;
-use indexmap::IndexMap;
 use tempfile::tempdir;
 use zero_tensor_lib::core::{
     dataset::{
@@ -93,7 +93,6 @@ fn test_e2e_batch_verification() {
         .build()
         .expect("Failed to init producer");
 
-
     let consumer_socket = socket_path.clone();
     let consumer_shm = shm_name.to_string();
 
@@ -105,7 +104,7 @@ fn test_e2e_batch_verification() {
             .parent()
             .unwrap()
             .to_path_buf();
-        
+
         let python_project_dir = root_dir.join("zero-tensor-py");
         let consumer_script = root_dir.join("zero-tensor-rs/tests/ip_1.py");
         let python_path = python_project_dir.join("src");
@@ -136,9 +135,7 @@ fn test_e2e_batch_verification() {
         .start_streaming(&dataset, batch_size)
         .expect("Streaming failed");
 
-    consumer_handle
-        .join()
-        .expect("Consumer thread panicked");
+    consumer_handle.join().expect("Consumer thread panicked");
 
     println!("E2E Batch Verification PASSED");
 }

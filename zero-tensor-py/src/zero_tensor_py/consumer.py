@@ -83,12 +83,12 @@ class ZeroTensorConsumer:
                     self.handshake_dict[key] = val
         
         try:
-            self.cb_size = self.handshake_dict["cb_size"]
-            self.head_offset = self.handshake_dict["head_offset"]
-            self.tail_offset = self.handshake_dict["tail_offset"]
-            self.is_running_offset = self.handshake_dict["is_running_offset"]
+            self.cb_size = int(self.handshake_dict["cb_size"])
+            self.head_offset = int(self.handshake_dict["head_offset"])
+            self.tail_offset = int(self.handshake_dict["tail_offset"])
+            self.is_running_offset = int(self.handshake_dict["is_running_offset"])
             
-            self.header_size = self.handshake_dict["header_size"]
+            self.header_size = int(self.handshake_dict["header_size"])
             self.dt_offset = self.handshake_dict["dt_offset"]
             self.dt_size = self.handshake_dict["dt_size"]
             self.ndims_offset = self.handshake_dict["ndims_offset"]
@@ -110,6 +110,10 @@ class ZeroTensorConsumer:
             missing = e.args[0]
             raise zt_exc.ProtocolError(
                 f"Invalid handshake protocol, {missing} is missing. Full str: {handshake_str}"
+            )
+        except ValueError as e:
+            raise zt_exc.MalformedMessageError(
+                f"Invalid value in handshake: {e}. Full str: {handshake_str}"
             )
 
     def connect(self):
@@ -262,7 +266,9 @@ class ZeroTensorConsumer:
             strides = list(struct.unpack_from(f"<{stride_fmt}", self.mem, current_meta_offset))
             current_meta_offset += ndims * self.stride_type_size
 
-            dtype = DT_MAP[dt]
+            dtype = DT_MAP.get(dt)
+            if dtype is None:
+                raise zt_exc.MalformedMessageError(f"Unknown dtype in header: {dt}")
             
             batch_size = shape[0]
             item_shape = shape[1:] if len(shape) > 1 else shape

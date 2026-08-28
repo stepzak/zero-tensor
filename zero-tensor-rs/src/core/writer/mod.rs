@@ -1,9 +1,9 @@
 pub mod cache;
 pub mod error;
 
-use indexmap::IndexMap;
 use super::dataset::item::TensorBatchLayout;
 use super::helpers::align_to;
+use indexmap::IndexMap;
 
 pub use cache::TensorWriterCache;
 pub use error::*;
@@ -38,10 +38,7 @@ impl<'a, 'b, 'c> TensorWriter<'a, 'b, 'c> {
             });
         }
 
-        Ok(TensorWriter {
-            cache,
-            slot_buffer,
-        })
+        Ok(TensorWriter { cache, slot_buffer })
     }
 
     pub fn get_offset_size(&self, key: &str) -> Option<(usize, usize)> {

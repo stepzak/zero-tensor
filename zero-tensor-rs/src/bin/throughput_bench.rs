@@ -64,7 +64,6 @@ impl<'a> ZeroTensorDataset<'a> for BenchDataset {
         let _ = writer.write("data", |buf: &mut [u8]| -> Result<usize, std::io::Error> {
             let target = &mut buf[..self.raw_item_size];
             target.copy_from_slice(&self.source_buffer[..self.raw_item_size]);
-
             Ok(self.raw_item_size)
         });
         Ok(())

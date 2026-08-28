@@ -1,7 +1,7 @@
+use indexmap::IndexMap;
 use std::process::Command;
 use std::thread;
 use std::time::Duration;
-use indexmap::IndexMap;
 use tempfile::tempdir;
 use zero_tensor_lib::core::{
     buffer::get_dt_size,
@@ -82,9 +82,8 @@ impl<'a> ZeroTensorDataset<'a> for DynamicDataset {
         &self,
         idx: usize,
         writer: &mut zero_tensor_lib::core::writer::TensorWriter<'layout, 'b, 'c>,
-    ) -> Result<(), Self::Error>
-    {
-        let _ =writer.write("data", |buf| -> Result<usize, std::io::Error> {
+    ) -> Result<(), Self::Error> {
+        let _ = writer.write("data", |buf| -> Result<usize, std::io::Error> {
             let (h, w) = self.shapes[idx];
             let total_els = (h * w) as usize;
 
@@ -101,7 +100,6 @@ impl<'a> ZeroTensorDataset<'a> for DynamicDataset {
         });
         Ok(())
     }
-      
 }
 
 #[test]

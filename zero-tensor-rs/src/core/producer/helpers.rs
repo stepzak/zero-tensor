@@ -19,7 +19,7 @@ pub fn prepare_batch_metadata<'a, D: ZeroTensorDataset<'a>>(
     (
         IndexMap<&'a str, TensorBatchLayout>,
         IndexMap<&'a str, TensorBatchLayout>,
-        usize, // data_size_per_item (БЕЗ метаданных!)
+        usize, // data_size_per_item (no meta)
         usize, // total_batch_metadata_size
         usize, // total_slot_size
     ),
@@ -30,32 +30,40 @@ pub fn prepare_batch_metadata<'a, D: ZeroTensorDataset<'a>>(
     let single_layouts = if let Some(s) = dataset.static_layouts() {
         s.clone()
     } else {
-        dataset.dynamic_layouts(&[0]).map_err(|e| ZTProducerErr::DatasetError {
-            idx: 0.into(),
-            source: e,
-        })?
+        dataset
+            .dynamic_layouts(&[0])
+            .map_err(|e| ZTProducerErr::DatasetError {
+                idx: 0.into(),
+                source: e,
+            })?
     };
 
     let mut batch_layouts = single_layouts.clone();
 
     for (_, b_layout) in batch_layouts.iter_mut() {
-        b_layout.add_batch_dimension(current_batch_size).map_err(|e| match e {
-            LayoutError::ShapeStrideMismatch { strides, shape } => {
-                ZTBufErr::InvalidShape(strides, shape)
-            }
-        })?;
+        b_layout
+            .add_batch_dimension(current_batch_size)
+            .map_err(|e| match e {
+                LayoutError::ShapeStrideMismatch { strides, shape } => {
+                    ZTBufErr::InvalidShape(strides, shape)
+                }
+            })?;
     }
 
-    let data_size_per_item: usize = single_layouts.iter().map(|(_, layout)| {
-        align_to(layout.total_bytes(), TensorWriter::ALIGNMENT)
-    }).sum();
+    let data_size_per_item: usize = single_layouts
+        .iter()
+        .map(|(_, layout)| align_to(layout.total_bytes(), TensorWriter::ALIGNMENT))
+        .sum();
 
-    let total_batch_metadata_size: usize = batch_layouts.iter().map(|(_, layout)| {
-        let ndims = layout.shape().len();
-        let raw = size_of::<TensorHeader>() 
-            + ndims * (size_of::<StrideType>() + size_of::<ShapeType>());
-        align_to(raw, TensorWriter::ALIGNMENT)
-    }).sum();
+    let total_batch_metadata_size: usize = batch_layouts
+        .iter()
+        .map(|(_, layout)| {
+            let ndims = layout.shape().len();
+            let raw = size_of::<TensorHeader>()
+                + ndims * (size_of::<StrideType>() + size_of::<ShapeType>());
+            align_to(raw, TensorWriter::ALIGNMENT)
+        })
+        .sum();
 
     let total_slot_size = total_batch_metadata_size + (data_size_per_item * current_batch_size);
 
@@ -82,8 +90,8 @@ fn process_chunk<'a, 'layout, 'chunk, D: ZeroTensorDataset<'a>>(
         )));
     }
 
-    let mut writer = TensorWriter::new(&layouts, shm_chunk, cache)
-        .map_err(ZTProducerErr::TensorWriterError)?;
+    let mut writer =
+        TensorWriter::new(&layouts, shm_chunk, cache).map_err(ZTProducerErr::TensorWriterError)?;
 
     dataset
         .write_item_into(i, &mut writer)
@@ -118,15 +126,16 @@ pub fn copy_batch_to_shm<'a, 'layout, 'c, D: ZeroTensorDataset<'a>>(
     total_slot_size: usize,
     caches: &'c mut [Mutex<TensorWriterCache<'layout>>],
 ) -> Result<(), ZTProducerErr<D::Error>> {
-    
     let mut current_meta_offset = slot_offset;
     for (_, layout) in batch_layouts.iter() {
-        buffer.write_tensor_metadata(
-            current_meta_offset,
-            layout.shape(),
-            layout.strides(),
-            layout.dt(),
-        ).map_err(ZTProducerErr::ZTBufferError)?;
+        buffer
+            .write_tensor_metadata(
+                current_meta_offset,
+                layout.shape(),
+                layout.strides(),
+                layout.dt(),
+            )
+            .map_err(ZTProducerErr::ZTBufferError)?;
 
         let ndims = layout.shape().len();
         current_meta_offset += align_to(
@@ -142,9 +151,8 @@ pub fn copy_batch_to_shm<'a, 'layout, 'c, D: ZeroTensorDataset<'a>>(
         return Err(ZTProducerErr::ZTBufferError(ZTBufErr::InvalidShape(0, 0)));
     }
 
-    let raw_shm_slice = unsafe { 
-        buffer.get_item_slice_mut(slot_offset, data_offset_in_slot, data_total_size)? 
-    };
+    let raw_shm_slice =
+        unsafe { buffer.get_item_slice_mut(slot_offset, data_offset_in_slot, data_total_size)? };
 
     const RAYON_THRESHOLD: usize = 256 * 1024;
     let n_tensors = single_layouts.len();
@@ -155,7 +163,14 @@ pub fn copy_batch_to_shm<'a, 'layout, 'c, D: ZeroTensorDataset<'a>>(
             .enumerate()
         {
             let mut cache_guard = caches[idx % caches.len()].lock();
-            process_chunk(running, shm_chunk, dataset, single_layouts, i, &mut cache_guard)?;
+            process_chunk(
+                running,
+                shm_chunk,
+                dataset,
+                single_layouts,
+                i,
+                &mut cache_guard,
+            )?;
         }
     } else {
         raw_shm_slice
@@ -163,7 +178,14 @@ pub fn copy_batch_to_shm<'a, 'layout, 'c, D: ZeroTensorDataset<'a>>(
             .zip(batch_indices)
             .try_for_each(|(shm_chunk, &i)| -> Result<(), ZTProducerErr<D::Error>> {
                 let mut local_cache = TensorWriterCache::with_capacity(n_tensors);
-                process_chunk(running, shm_chunk, dataset, single_layouts, i, &mut local_cache)
+                process_chunk(
+                    running,
+                    shm_chunk,
+                    dataset,
+                    single_layouts,
+                    i,
+                    &mut local_cache,
+                )
             })?;
     }
 

@@ -4,9 +4,7 @@ import socket
 import struct
 import threading
 import time
-
 from zero_tensor_py.consumer import _PROTO_BEGIN_STR, VERSION
-
 
 CB_HEAD_OFFSET = 0
 CB_HEAD_SIZE = 64 
@@ -19,7 +17,8 @@ CB_SLOT_SIZE_SIZE = 4
 CB_IS_RUNNING_OFFSET = 136
 CB_IS_RUNNING_SIZE = 8
 CB_SIZE = 152
-HEADER_SIZE = 8
+
+HEADER_SIZE = 4
 HEADER_DT_OFFSET = 0
 HEADER_DT_SIZE = 1
 HEADER_NDIMS_OFFSET = 1
@@ -27,7 +26,11 @@ HEADER_NDIMS_SIZE = 1
 HEADER_IS_READY_OFFSET = 2
 HEADER_IS_READY_SIZE = 1
 SHAPE_TYPE_SIZE = 4
+STRIDE_TYPE_SIZE = 4
+SLOT_ALIGNMENT = 64
 
+def _align_to(n: int, to: int) -> int:
+    return (n + to - 1) & ~(to - 1)
 
 class MockAsyncProducer:
     def __init__(self, 
@@ -35,10 +38,10 @@ class MockAsyncProducer:
                  shm_path: str, 
                  nslots: int, 
                  slot_size: int, 
-                 wrong_vers = False, 
-                 wrong_proto = False,
-                 missing_proto = False,
-                 invalid_proto_val = False):
+                 wrong_vers=False, 
+                 wrong_proto=False,
+                 missing_proto=False,
+                 invalid_proto_val=False):
         self.socket_path = socket_path
         self.shm_path = shm_path
         self.nslots = nslots
@@ -46,7 +49,6 @@ class MockAsyncProducer:
         self.ver = VERSION if not wrong_vers else "0"
         self.missing_proto = missing_proto
         self.invalid_proto_val = invalid_proto_val
-        
         self.server_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         if os.path.exists(socket_path):
             os.remove(socket_path)
@@ -59,9 +61,10 @@ class MockAsyncProducer:
 
     def _build_handshake(self) -> str:
         cb_key = "cb_size" if not self.missing_proto else ""
-        cb_key+= (f"={CB_SIZE}" if not self.invalid_proto_val and not self.missing_proto else "")
+        cb_key += (f"={CB_SIZE}" if not self.invalid_proto_val and not self.missing_proto else "")
         if self.invalid_proto_val and not self.missing_proto:
-            cb_key+="=f"
+            cb_key += "=f"
+        
         return (
             f"{self.proto} {self.ver} "
             f"{cb_key} "
@@ -74,7 +77,9 @@ class MockAsyncProducer:
             f"dt_offset={HEADER_DT_OFFSET} dt_size={HEADER_DT_SIZE} "
             f"ndims_offset={HEADER_NDIMS_OFFSET} ndims_size={HEADER_NDIMS_SIZE} "
             f"is_ready_offset={HEADER_IS_READY_OFFSET} is_ready_size={HEADER_IS_READY_SIZE} "
-            f"shape_type_size={SHAPE_TYPE_SIZE}\n"
+            f"shape_type_size={SHAPE_TYPE_SIZE} "
+            f"stride_type_size={STRIDE_TYPE_SIZE} "
+            f"slot_alignment={SLOT_ALIGNMENT}\n"
         )
 
     def _init_control_block(self, mm: mmap.mmap):
@@ -86,6 +91,7 @@ class MockAsyncProducer:
 
     def start(self, batches: list[dict]):
         self.exc = None
+
         def loop():
             self.server_sock.settimeout(5.0)
             try:
@@ -93,8 +99,8 @@ class MockAsyncProducer:
                 self.conn = conn
             except socket.timeout:
                 return
-            try:
 
+            try:
                 with conn:
                     cmd = b""
                     while b"\n" not in cmd:
@@ -139,7 +145,6 @@ class MockAsyncProducer:
                             
                             shape_fmt = f"<{ndims}I"
                             struct.pack_into(shape_fmt, mm, slot_offset + HEADER_SIZE, *batch["shape"])
-                            
                             struct.pack_into(
                                 shape_fmt, 
                                 mm, 
@@ -147,17 +152,18 @@ class MockAsyncProducer:
                                 *batch["strides"]
                             )
                             
-                            data_offset = slot_offset + HEADER_SIZE + 2 * ndims * SHAPE_TYPE_SIZE
+                            meta_end = HEADER_SIZE + 2 * ndims * SHAPE_TYPE_SIZE
+                            data_offset = slot_offset + _align_to(meta_end, SLOT_ALIGNMENT)
+                            
                             mm[data_offset:data_offset + len(batch["data"])] = batch["data"]
                             
                             mm[slot_offset + HEADER_IS_READY_OFFSET] = 1
                             
                             mm[CB_HEAD_OFFSET:CB_HEAD_OFFSET + 8] = struct.pack("<Q", head + 1)
-                            
                             mm.close()
-                        
+
                         head += 1
-                    
+
                     timeout = 3.0
                     start_time = time.time()
                     while time.time() - start_time < timeout:
@@ -168,11 +174,12 @@ class MockAsyncProducer:
                         if current_tail >= len(batches):
                             break
                         time.sleep(0.001)
-                    
+
                     with open(self.shm_path, "r+b") as f:
                         mm = mmap.mmap(f.fileno(), total_size)
                         mm[CB_IS_RUNNING_OFFSET:CB_IS_RUNNING_OFFSET + 8] = struct.pack("<Q", 0)
                         mm.close()
+
             except Exception as e:
                 self.exc = e
 

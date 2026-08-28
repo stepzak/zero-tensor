@@ -78,10 +78,10 @@ fn test_multiple_tensors_happy_path() {
 
         writer.finalize().unwrap();
     }
-    
+
     assert_eq!(&buffer[0..100], &[1u8; 100]);
     assert_eq!(&buffer[100..128], &[0u8; 28]);
-    
+
     assert_eq!(&buffer[128..138], &[2u8; 10]);
     assert_eq!(&buffer[138..192], &[0u8; 54]);
 }
@@ -111,12 +111,12 @@ fn test_data_alignment() {
 
     assert_eq!(off_small, 0);
     assert_eq!(size_small, 64);
-    
+
     assert_eq!(off_medium, 64);
-    assert_eq!(size_medium, 128); 
-    
+    assert_eq!(size_medium, 128);
+
     assert_eq!(off_large, 192);
-    assert_eq!(size_large, 1024); 
+    assert_eq!(size_large, 1024);
 }
 
 #[test]
@@ -313,7 +313,6 @@ fn test_zero_padding_full_write() {
     assert_eq!(&buffer[0..64], &[77u8; 64]);
 }
 
-
 #[test]
 fn test_different_dtypes() {
     let mut layouts = IndexMap::new();
@@ -464,13 +463,13 @@ fn test_realistic_image_dataset() {
     let (off_image, _) = writer.get_offset_size("image").unwrap();
     let (off_mask, _) = writer.get_offset_size("mask").unwrap();
     let (off_label, _) = writer.get_offset_size("label").unwrap();
-    
+
     assert_eq!(off_image, 0);
     assert_eq!(buffer[off_image], 128);
-    
+
     assert_eq!(off_mask, 150528);
     assert_eq!(buffer[off_mask], 255);
-    
+
     assert_eq!(off_label, 200704);
     let label: i32 = bytemuck::pod_read_unaligned(&buffer[off_label..off_label + 4]);
     assert_eq!(label, 42);
