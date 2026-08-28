@@ -16,7 +16,7 @@ Break the PyTorch `DataLoader` bottleneck. ZeroTensor is a high-performance, loc
 -  **Clean IPC**: Unix domain socket for control plane + POSIX shared memory for data
 -  **RAII cleanup**: Automatic socket/SHM cleanup on drop, even on panic or SIGINT
 
-## 📊 Performance
+## Performance
 
 Benchmarks on a single socket (Intel/AMD CPU, DDR4/DDR5):
 
