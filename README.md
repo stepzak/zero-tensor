@@ -6,16 +6,15 @@ Break the PyTorch `DataLoader` bottleneck. ZeroTensor is a high-performance, loc
 
 ---
 
-## ✨ Key Features
+## Key Features
 
-- 🚀 **Blazing fast**: 24-26 GB/s sustained throughput (vs ~3-5 GB/s for PyTorch DataLoader)
-- 🎯 **True zero-copy**: Consumer gets PyTorch tensors backed directly by shared memory via `torch.as_strided`
-- 🔄 **Multi-tensor support**: Stream multiple named tensors (`image`, `mask`, `label`) in a single batch
-- 🧠 **Dynamic batching**: Automatic padding to handle variable-size inputs
-- 🛡️ **Type-safe**: Full support for `f16`, `bf16`, `f32`, `f64`, `i8`, `i32`, `i64`, `u8`
-- 🎨 **Transform pipeline**: CPU transforms (scale, standardize, clamp, add) with parallel execution
-- 🔌 **Clean IPC**: Unix domain socket for control plane + POSIX shared memory for data
-- 🧹 **RAII cleanup**: Automatic socket/SHM cleanup on drop, even on panic or SIGINT
+-  **Blazing fast**: 24-26 GB/s sustained throughput (vs ~3-5 GB/s for PyTorch DataLoader)
+-  **True zero-copy**: Consumer gets PyTorch tensors backed directly by shared memory via `torch.as_strided`
+-  **Multi-tensor support**: Stream multiple named tensors (`image`, `mask`, `label`) in a single batch
+-  **Dynamic batching**: Automatic padding to handle variable-size inputs
+-  **Type-safe**: Full support for `f16`, `bf16`, `f32`, `f64`, `i8`, `i32`, `i64`, `u8`
+-  **Clean IPC**: Unix domain socket for control plane + POSIX shared memory for data
+-  **RAII cleanup**: Automatic socket/SHM cleanup on drop, even on panic or SIGINT
 
 ## 📊 Performance
 
@@ -67,8 +66,6 @@ ZeroTensor decouples heavy I/O operations (parallel loading, decoding, preproces
 ## Quick Start
 ### 1. Rust Data Producer
 Define your dataset using the `ZeroTensorDataset` trait. You can optionally attach a high-performance `Pipeline` to preprocess data in Rust.
-
-```rust
 
 **Data flow:**
 1. Producer writes tensor data + metadata into a free slot in SHM
