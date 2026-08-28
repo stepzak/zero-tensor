@@ -25,7 +25,9 @@ def _align_to(n: int, to: int) -> int:
 
 
 class ZeroTensorConsumer:
-    def __init__(self, socket_path: str, shm_name: str):
+    def __init__(self, socket_path: str, shm_name: str, prefetch_factor: int = 3):
+        if prefetch_factor <= 0:
+            raise ValueError(f"prefetch_factor must be greater than zero(received: {prefetch_factor})")
         self.socket_path = socket_path
         self.shm_name = os.path.join("/dev/shm", shm_name)
         self.slot_size = None
@@ -64,6 +66,10 @@ class ZeroTensorConsumer:
         self._keys = None
         self._slot_structure_cache = None
         self._total_meta_size = 0
+
+        self._running = False
+        self._prefetch_queue = collections.deque(maxlen = prefetch_factor)
+        self._prefetch_thread = None
 
     def _parse_handshake(self, handshake_str: str):
         parts = handshake_str.strip().split()
@@ -116,6 +122,7 @@ class ZeroTensorConsumer:
                 f"Invalid value in handshake: {e}. Full str: {handshake_str}"
             )
 
+
     def connect(self):
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         try:
@@ -163,12 +170,14 @@ class ZeroTensorConsumer:
             self._pending_releases: collections.deque = collections.deque()
             self._release_tail = self._load_tail()
             self._current_slot_idx = None
+            self._running = True
 
         except Exception as e:
             self.close()
             raise e
 
     def close(self):
+        self._running = False
         if self.mem is not None and self.is_running_offset > 0:
             try:
                 self._store_is_running(0)
@@ -324,7 +333,7 @@ class ZeroTensorConsumer:
         if self.sock is None or self.mem is None:
             raise RuntimeError("Consumer is not connected. Use 'with' or 'connect'")
         return self._iter_epoch()
-
+    
     def _iter_epoch(self) -> Generator[Dict[str, torch.Tensor], None, None]:
         if self.mem is None:
             raise RuntimeError("Memory not mapped")
