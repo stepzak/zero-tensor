@@ -1,14 +1,13 @@
+use indexmap::IndexMap;
 use std::path::Path;
-use zero_tensor_lib::{
-    core::{
-        dataset::{
-            ZeroTensorDataset,
-            item::{ShapeType, TensorBatchLayout, TensorDT},
-        },
-        producer::ZeroTensorProducerBuilder,
+use zero_tensor_lib::core::{
+    buffer::tensor_meta::TensorHeader,
+    dataset::{
+        ZeroTensorDataset,
+        item::{ShapeType, StrideType, TensorBatchLayout, TensorDT},
     },
-    pipeline::Pipeline,
-    transform,
+    producer::ZeroTensorProducerBuilder,
+    writer::TensorWriter,
 };
 
 const BATCH_SIZE: usize = 48;
@@ -20,7 +19,7 @@ const NSLOTS: u64 = 32;
 
 struct BenchDataset {
     raw_item_size: usize,
-    meta: TensorBatchLayout,
+    meta: IndexMap<&'static str, TensorBatchLayout>,
     source_buffer: Vec<u8>,
 }
 
@@ -28,7 +27,9 @@ impl BenchDataset {
     fn new(raw_item_size: usize) -> Self {
         let shape = vec![CHANNELS, HEIGHT, WIDTH];
         let strides = vec![HEIGHT * WIDTH, WIDTH, 1];
-        let meta = TensorBatchLayout::new(shape.into(), strides.into(), TensorDT::F32);
+        let layout = TensorBatchLayout::new(shape.into(), strides.into(), TensorDT::F32);
+        let mut meta = IndexMap::new();
+        meta.insert("data", layout);
         let mut source = vec![0u8; raw_item_size];
         fastrand::Rng::new().fill(&mut source);
 
@@ -40,7 +41,7 @@ impl BenchDataset {
     }
 }
 
-impl ZeroTensorDataset for BenchDataset {
+impl<'a> ZeroTensorDataset<'a> for BenchDataset {
     type Error = std::io::Error;
 
     fn len(&self) -> usize {
@@ -51,15 +52,21 @@ impl ZeroTensorDataset for BenchDataset {
         self.len() == 0
     }
 
-    fn get_batch_layout(&self, _idxs: &[usize]) -> Result<TensorBatchLayout, Self::Error> {
-        Ok(self.meta.clone())
+    fn static_layouts(&self) -> Option<&IndexMap<&'static str, TensorBatchLayout>> {
+        Some(&self.meta)
     }
 
-    fn write_item_into(&self, _idx: usize, buf: &mut [u8]) -> Result<usize, Self::Error> {
-        let target = &mut buf[..self.raw_item_size];
-        target.copy_from_slice(&self.source_buffer[..self.raw_item_size]);
-
-        Ok(self.raw_item_size)
+    fn write_item_into<'layout, 'b, 'c>(
+        &self,
+        _idx: usize,
+        writer: &mut zero_tensor_lib::core::writer::TensorWriter<'layout, 'b, 'c>,
+    ) -> Result<(), Self::Error> {
+        let _ = writer.write("data", |buf: &mut [u8]| -> Result<usize, std::io::Error> {
+            let target = &mut buf[..self.raw_item_size];
+            target.copy_from_slice(&self.source_buffer[..self.raw_item_size]);
+            Ok(self.raw_item_size)
+        });
+        Ok(())
     }
 }
 
@@ -72,24 +79,44 @@ fn main() {
     }
 
     let item_elements = CHANNELS * HEIGHT * WIDTH;
-    let raw_item_size = item_elements as u64 * 4;
+    let raw_item_size = item_elements * 4;
 
-    let slot_size = (raw_item_size * BATCH_SIZE as u64) + 4096;
+    let ndims = 3;
+    let tensor_header_size = size_of::<TensorHeader>();
+    let shape_stride_size = size_of::<ShapeType>() + size_of::<StrideType>();
+    let per_tensor_meta = tensor_header_size + ndims * shape_stride_size;
+    let metadata_size_per_item =
+        (per_tensor_meta + TensorWriter::ALIGNMENT - 1) & !(TensorWriter::ALIGNMENT - 1);
+
+    let data_size_per_item =
+        (raw_item_size + TensorWriter::ALIGNMENT - 1) & !(TensorWriter::ALIGNMENT - 1);
+    let element_size = metadata_size_per_item + data_size_per_item;
+
+    let slot_size = (element_size * BATCH_SIZE) as u64;
 
     println!("[Rust Bench] Initializing ZeroTensorProducer...");
     println!(" -> SHM Name: {}", shm_name);
     println!(
+        " -> Metadata size per item: {} bytes",
+        metadata_size_per_item
+    );
+    println!(" -> Data size per item: {} bytes", data_size_per_item);
+    println!(" -> Element size per item: {} bytes", element_size);
+    println!(
         " -> Slot Size: {:.2} MB",
         slot_size as f64 / 1024.0 / 1024.0
+    );
+    println!(
+        " -> Total SHM: {:.2} MB",
+        (slot_size * NSLOTS) as f64 / 1024.0 / 1024.0
     );
 
     let mut producer = ZeroTensorProducerBuilder::new(slot_size, shm_name, socket_path)
         .num_slots(NSLOTS)
-        .pipeline(Pipeline::new().then(transform::Scale::new(3)))
         .build()
         .expect("Failed to create producer");
 
-    let dataset = BenchDataset::new(raw_item_size as usize);
+    let dataset = BenchDataset::new(raw_item_size);
 
     println!("[Rust Bench] Ready! Waiting for Python consumer to connect...");
 

@@ -6,18 +6,27 @@ Break the PyTorch `DataLoader` bottleneck. ZeroTensor is a high-performance, loc
 
 ---
 
-## Performance at a Glance
+## ✨ Key Features
 
-*Environment: Synthetic dataset (3×1024×1024 F32 tensors), Batch Size 12, 200 Steps, Single-node CPU.*
+- 🚀 **Blazing fast**: 24-26 GB/s sustained throughput (vs ~3-5 GB/s for PyTorch DataLoader)
+- 🎯 **True zero-copy**: Consumer gets PyTorch tensors backed directly by shared memory via `torch.as_strided`
+- 🔄 **Multi-tensor support**: Stream multiple named tensors (`image`, `mask`, `label`) in a single batch
+- 🧠 **Dynamic batching**: Automatic padding to handle variable-size inputs
+- 🛡️ **Type-safe**: Full support for `f16`, `bf16`, `f32`, `f64`, `i8`, `i32`, `i64`, `u8`
+- 🎨 **Transform pipeline**: CPU transforms (scale, standardize, clamp, add) with parallel execution
+- 🔌 **Clean IPC**: Unix domain socket for control plane + POSIX shared memory for data
+- 🧹 **RAII cleanup**: Automatic socket/SHM cleanup on drop, even on panic or SIGINT
 
-| Framework / Configuration | Throughput | Page Faults | CPU Kernel Time |
-| :--- | :---: | :---: | :---: |
-| **PyTorch DataLoader** (Standard) | ~6.5 GB/s | Linear growth | ~90% |
-| **ZeroTensor** (Pure IPC, No Pipeline) | **~22.0 GB/s** | **O(1) (Startup only)** | **~5%** |
-| **ZeroTensor** (+ Rust SIMD Pipeline) | **~13.5 GB/s** | **O(1) (Startup only)** | **~15%** |
+## 📊 Performance
 
-> **Why is ZeroTensor faster even with a pipeline?**  
-> Standard PyTorch wastes cycles on Pickle serialization and IPC pipes. ZeroTensor applies transformations (like `Scale`, `Normalize`) directly in Rust using SIMD vectorization *before* the data ever touches Python, maintaining a massive throughput advantage.
+Benchmarks on a single socket (Intel/AMD CPU, DDR4/DDR5):
+
+| Loader | Throughput | Notes |
+|--------|-----------|-------|
+| **ZeroTensor** | **24-26 GB/s** | Zero-copy, Rust producer |
+| PyTorch DataLoader (8 workers, pin_memory) | 3-5 GB/s | Multiprocessing + copy |
+
+> Benchmarked with `3×512×512` F32 tensors, batch size 48, 200 steps. See `zero-tensor-rs/src/bin/throughput_bench.rs` and `zero-tensor-py/benchmarks/zt_bench.py`.
 
 ---
 
@@ -53,7 +62,6 @@ ZeroTensor decouples heavy I/O operations (parallel loading, decoding, preproces
 
 * **Lock-Free SPSC Ring Buffer**: Uses `CachePadded` atomics for true zero-lock concurrency between `Producer` and `Consumer`.
 * **Pre-faulted Shared Memory**: Memory is mapped and "warmed up" once at startup. Zero runtime page faults.
-* **In-Place Rust Transforms**: Apply `Scale`, `Add`, `Clamp`, or `Standardize` directly to the SHM buffer with automatic AVX2/AVX-512 vectorization.
 * **Strict RAII Cleanup**: All sockets and `/dev/shm` segments are tied to Rust lifecycles. They are safely unlinked on panic, `SIGINT`, or normal drop.
 
 ## Quick Start
@@ -61,66 +69,77 @@ ZeroTensor decouples heavy I/O operations (parallel loading, decoding, preproces
 Define your dataset using the `ZeroTensorDataset` trait. You can optionally attach a high-performance `Pipeline` to preprocess data in Rust.
 
 ```rust
-use std::path::Path;
-use zero_tensor_lib::{
-    core::dataset::{
-        item::{TensorDT, TensorBatchLayout},
-        ZeroTensorDataset,
-    },
+
+**Data flow:**
+1. Producer writes tensor data + metadata into a free slot in SHM
+2. Producer sets `is_ready = 1` and increments `head`
+3. Consumer polls `head`, reads metadata, creates zero-copy PyTorch tensors via `torch.as_strided`
+4. Consumer increments `tail` after processing, freeing the slot
+
+## Quick Start
+
+### Producer (Rust)
+
+```rust
+use zero_tensor_lib::core::{
+    dataset::{ZeroTensorDataset, item::{TensorBatchLayout, TensorDT}},
     producer::ZeroTensorProducerBuilder,
-    pipeline::Pipeline,
-    transform::Scale,
+    writer::TensorWriter,
 };
-use smallvec::smallvec;
+use indexmap::IndexMap;
 
-struct MyDataset { /* Store metadata or source paths here */ }
+struct MyDataset;
 
-impl ZeroTensorDataset for MyDataset {
+impl<'a> ZeroTensorDataset<'a> for MyDataset {
     type Error = std::io::Error;
 
     fn len(&self) -> usize { 10_000 }
-    fn is_empty(&self) -> bool { false }
 
-    /// Returns the layout for a SINGLE item (Producer handles batch dimension automatically)
-    fn get_batch_layout(&self, _indices: &[usize]) -> Result<TensorBatchLayout, Self::Error> {
-        Ok(TensorBatchLayout::new(
-            smallvec![3, 1024, 1024],          // Shape [C, H, W]
-            smallvec![1024 * 1024, 1024, 1],   // Strides in elements
-            TensorDT::F32
-        ))
+    fn static_layouts(&self) -> Option<&IndexMap<&'static str, TensorBatchLayout>> {
+        use std::sync::OnceLock;
+        static LAYOUTS: OnceLock<IndexMap<&'static str, TensorBatchLayout>> = OnceLock::new();
+        Some(LAYOUTS.get_or_init(|| {
+            let mut m = IndexMap::new();
+            m.insert(
+                "image",
+                TensorBatchLayout::new(
+                    vec![3, 224, 224].into(),
+                    vec![224 * 224, 224, 1].into(),
+                    TensorDT::F32,
+                ),
+            );
+            m
+        }))
     }
 
-    /// Writes raw item bytes directly into the pre-allocated slice
-    fn write_item_into(&self, idx: usize, buf: &mut [u8]) -> Result<(), Self::Error> {
-        // Write your decoded data (e.g., image pixels) into 'buf'
-        // The buffer is already sized to the max shape of the batch
+    fn write_item_into<'layout, 'b, 'c>(
+        &self,
+        idx: usize,
+        writer: &mut TensorWriter<'layout, 'b, 'c>,
+    ) -> Result<(), Self::Error> {
+        writer.write("image", |buf| {
+            let floats: &mut [f32] = bytemuck::cast_slice_mut(buf);
+            // Fill your data here...
+            for (i, x) in floats.iter_mut().enumerate() {
+                *x = (idx * 1000 + i) as f32;
+            }
+            Ok(floats.len() * 4)
+        }).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
         Ok(())
     }
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let dataset = MyDataset {};
-    let slot_size = 48 * 1024 * 1024; // 48 MB per slot
-
-    // Optional: Add a high-performance preprocessing pipeline
-    let pipeline = Pipeline::new().then(Scale::new(1.0 / 255.0)); // Normalize to [0, 1]
-
+fn main() {
     let mut producer = ZeroTensorProducerBuilder::new(
-        slot_size,
-        "zt_shared_buffer",
-        Path::new("/tmp/zt.sock"),
+        64 * 1024 * 1024,       // 64 MB per slot
+        "my_shm",               // SHM name
+        "/tmp/my_producer.sock" // Unix socket
     )
-    .num_slots(4)               // Use 3+ slots for pipeline efficiency
-    .overwrite_socket(true)     // Safely clean up dead sockets on startup
-    .shuffle(true)
-    .seed(42)
-    .pipeline(pipeline)         // Attach the pipeline
-    .build()?;
+    .num_slots(8)
+    .build()
+    .unwrap();
 
-    println!("Producer running... Waiting for Python consumer.");
-    producer.start_streaming(&dataset, 12)?; // Batch size = 12
-
-    Ok(())
+    producer.start_streaming(&MyDataset, 32).unwrap(); // batch_size = 32
 }
 ```
 
@@ -138,8 +157,9 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 with ZeroTensorConsumer(socket_path, shm_name) as consumer:
     for epoch in range(5):
         for batch in consumer:
+            image = batch["image"]
             # IMPORTANT: do not use default batch.to() method, as it may lead to Race Condition
-            inputs = consumer.to_device(batch, device, non_blocking=True)
+            inputs = consumer.to_device(image, device, non_blocking=True)
             
             outputs = model(inputs)
             loss = criterion(outputs, targets)
@@ -147,20 +167,67 @@ with ZeroTensorConsumer(socket_path, shm_name) as consumer:
             optimizer.step()
 ```
 
-## Roadmap & Future Work
+## Multi-Tensor Datasets
+Stream multiple tensors per sample (e.g., image + mask + label):
 
-We are actively working on scaling ZeroTensor to support more complex deep learning workloads. Contributions are highly welcome!
+```rust
+fn static_layouts(&self) -> Option<&IndexMap<&'static str, TensorBatchLayout>> {
+    static LAYOUTS: OnceLock<IndexMap<&str, TensorBatchLayout>> = OnceLock::new();
+    Some(LAYOUTS.get_or_init(|| {
+        let mut m = IndexMap::new();
+        m.insert("image", TensorBatchLayout::new(vec![3, 224, 224].into(), ...));
+        m.insert("mask",  TensorBatchLayout::new(vec![224, 224].into(), ...));
+        m.insert("label", TensorBatchLayout::new(vec![1].into(), ...));
+        m
+    }))
+}
 
-[x] **In-Place Rust Dataset Pipeline**: Refactored core dataset traits to highly optimized in-place memory writes using zero-cost slicing.
+fn write_item_into(&self, idx: usize, writer: &mut TensorWriter) -> Result<()> {
+    writer.write("image", |buf| { /* ... */ Ok(size) })?;
+    writer.write("mask",  |buf| { /* ... */ Ok(size) })?;
+    writer.write("label", |buf| { /* ... */ Ok(size) })?;
+    Ok(())
+}
+```
 
-[x] **Builder Pattern & Multi-Epoch Shuffling**: Integrated flexible producer initialization with configurable shuffling seeds and epoch signaling.
+Consumer receives a dictionary:
 
-[x] **SIMD-Optimized Transforms**: Scale, Add, Clamp, and Standardize now utilize native SIMD vectorization (AVX2/AVX-512) via ndarray + rayon.
+```python
+batch = next(consumer)
+image = batch["image"]  # [B, 3, 224, 224]
+mask  = batch["mask"]   # [B, 224, 224]
+label = batch["label"]  # [B, 1]
+```
 
-[x] **Selective Zeroing & Atomic Safety**: Guaranteed "all-or-nothing" atomicity for integer operations and prevention of data leakage between batches.
+## Dynamic Batching
+For variable-size inputs, implement ``dynamic_layouts()``:
 
-[] **Managed Consumer API**: Allow Python to automatically spawn and manage the Rust Producer process (similar to webdataset).
+```rust
+fn static_layouts(&self) -> Option<&IndexMap<&'static str, TensorBatchLayout>> {
+    static LAYOUTS: OnceLock<IndexMap<&str, TensorBatchLayout>> = OnceLock::new();
+    Some(LAYOUTS.get_or_init(|| {
+        let mut m = IndexMap::new();
+        m.insert("image", TensorBatchLayout::new(vec![3, 224, 224].into(), ...));
+        m.insert("mask",  TensorBatchLayout::new(vec![224, 224].into(), ...));
+        m.insert("label", TensorBatchLayout::new(vec![1].into(), ...));
+        m
+    }))
+}
 
-[] **GPU-Direct Support**: Direct SHM-to-GPU memory mapping via CUDA IPC to bypass CPU RAM entirely (targeting NVIDIA DALI-level performance).
+fn write_item_into(&self, idx: usize, writer: &mut TensorWriter) -> Result<()> {
+    writer.write("image", |buf| { /* ... */ Ok(size) })?;
+    writer.write("mask",  |buf| { /* ... */ Ok(size) })?;
+    writer.write("label", |buf| { /* ... */ Ok(size) })?;
+    Ok(())
+}
+```
 
-[] **Distributed Training Support**: Multi-node broadcasting capabilities.
+Smaller items are automatically zero-padded to the max size in the batch.
+
+--
+
+##  Safety & Cleanup
+* **RAII**: ZeroTensorProducer cleans up socket and SHM on drop, even on panic
+* **SIGINT**: Ctrl+C is handled gracefully via ctrlc crate
+* **Dead consumer detection**: Producer detects if consumer disconnects and stops
+* **Buffer overflow protection**: All writes are bounds-checked

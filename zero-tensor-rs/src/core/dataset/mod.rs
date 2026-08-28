@@ -1,6 +1,9 @@
 use std::{error::Error, fmt::Debug};
 
+use indexmap::IndexMap;
 use item::TensorBatchLayout;
+
+use crate::core::writer::TensorWriter;
 
 pub mod item;
 
@@ -16,16 +19,30 @@ impl ZTDatasetError for std::io::Error {
     }
 }
 
-pub trait ZeroTensorDataset: Send + Sync {
+pub trait ZeroTensorDataset<'data>: Send + Sync {
     type Error: ZTDatasetError;
 
     fn len(&self) -> usize;
 
-    /// # Safety contract
-    /// Must return `Ok(bytes_written)` if the write operation was a success
-    fn write_item_into(&self, idx: usize, buf: &mut [u8]) -> Result<usize, Self::Error>;
+    fn write_item_into<'layout, 'b, 'c>(
+        &self,
+        idx: usize,
+        writer: &mut TensorWriter<'layout, 'b, 'c>,
+    ) -> Result<(), Self::Error>;
 
-    fn get_batch_layout(&self, idxs: &[usize]) -> Result<TensorBatchLayout, Self::Error>;
+    fn static_layouts(&self) -> Option<&IndexMap<&'static str, TensorBatchLayout>> {
+        None
+    }
 
-    fn is_empty(&self) -> bool;
+    fn dynamic_layouts(
+        &self,
+        idxs: &[usize],
+    ) -> Result<IndexMap<&'data str, TensorBatchLayout>, Self::Error> {
+        let _ = idxs;
+        unimplemented!("Either static_layouts() or dynamic_layouts() must be implemented")
+    }
+
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
