@@ -5,6 +5,7 @@ import os
 import select
 import socket
 import struct
+import threading
 from typing import Generator, Optional, Union, Dict
 import atomics
 
@@ -68,8 +69,11 @@ class ZeroTensorConsumer:
         self._total_meta_size = 0
 
         self._running = False
-        self._prefetch_queue = collections.deque(maxlen = prefetch_factor)
+        self._prefetch_queue = None
         self._prefetch_thread = None
+        self._prefetch_factor = prefetch_factor
+        self._prefetch_exc = None
+        self._prefetch_lock = threading.Lock()
 
     def _parse_handshake(self, handshake_str: str):
         parts = handshake_str.strip().split()
