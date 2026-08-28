@@ -150,11 +150,11 @@ impl<'a> TensorWriterCache<'a> {
     }
 
     pub fn mark_written(&mut self, key: &str) -> bool {
-        if let Some(i) = self.slot_buffers.get_key_pos(key) {
-            if let Some(w) = self.written.get_mut(i) {
-                *w = true;
-                return true;
-            }
+        if let Some(i) = self.slot_buffers.get_key_pos(key)
+            && let Some(w) = self.written.get_mut(i)
+        {
+            *w = true;
+            return true;
         }
         false
     }

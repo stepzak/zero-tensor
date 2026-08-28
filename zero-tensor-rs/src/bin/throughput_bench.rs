@@ -79,7 +79,7 @@ fn main() {
     }
 
     let item_elements = CHANNELS * HEIGHT * WIDTH;
-    let raw_item_size = item_elements as usize * 4;
+    let raw_item_size = item_elements * 4;
 
     let ndims = 3;
     let tensor_header_size = size_of::<TensorHeader>();

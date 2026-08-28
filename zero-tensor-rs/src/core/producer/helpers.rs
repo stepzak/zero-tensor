@@ -12,19 +12,26 @@ use crate::core::helpers::align_to;
 use crate::core::producer::ZTProducerErr;
 use crate::core::writer::{TensorWriter, TensorWriterCache};
 
+type BatchMeta<'a> = (
+    IndexMap<&'a str, TensorBatchLayout>,
+    IndexMap<&'a str, TensorBatchLayout>,
+    usize, // data_size_per_item (no meta)
+    usize, // total_batch_metadata_size
+    usize, // total_slot_size
+);
+
+type BatchMetaRef<'a> = (
+    &'a IndexMap<&'a str, TensorBatchLayout>,
+    &'a IndexMap<&'a str, TensorBatchLayout>,
+    usize, // data_size_per_item (no meta)
+    usize, // total_batch_metadata_size
+    usize, // total_slot_size
+);
+
 pub fn prepare_batch_metadata<'a, D: ZeroTensorDataset<'a>>(
     dataset: &'a D,
     batch_indices: &[usize],
-) -> Result<
-    (
-        IndexMap<&'a str, TensorBatchLayout>,
-        IndexMap<&'a str, TensorBatchLayout>,
-        usize, // data_size_per_item (no meta)
-        usize, // total_batch_metadata_size
-        usize, // total_slot_size
-    ),
-    ZTProducerErr<D::Error>,
-> {
+) -> Result<BatchMeta<'a>, ZTProducerErr<D::Error>> {
     let current_batch_size = batch_indices.len();
 
     let single_layouts = if let Some(s) = dataset.static_layouts() {
@@ -91,7 +98,7 @@ fn process_chunk<'a, 'layout, 'chunk, D: ZeroTensorDataset<'a>>(
     }
 
     let mut writer =
-        TensorWriter::new(&layouts, shm_chunk, cache).map_err(ZTProducerErr::TensorWriterError)?;
+        TensorWriter::new(layouts, shm_chunk, cache).map_err(ZTProducerErr::TensorWriterError)?;
 
     dataset
         .write_item_into(i, &mut writer)
@@ -119,13 +126,17 @@ pub fn copy_batch_to_shm<'a, 'layout, 'c, D: ZeroTensorDataset<'a>>(
     dataset: &D,
     batch_indices: &[usize],
     slot_offset: usize,
-    single_layouts: &'layout IndexMap<&'layout str, TensorBatchLayout>,
-    batch_layouts: &IndexMap<&'layout str, TensorBatchLayout>,
-    data_size_per_item: usize,
-    total_batch_metadata_size: usize,
-    total_slot_size: usize,
+    batch_meta: BatchMetaRef<'layout>,
     caches: &'c mut [Mutex<TensorWriterCache<'layout>>],
 ) -> Result<(), ZTProducerErr<D::Error>> {
+    let (
+        single_layouts,
+        batch_layouts,
+        data_size_per_item,
+        total_batch_metadata_size,
+        total_slot_size,
+    ) = batch_meta;
+
     let mut current_meta_offset = slot_offset;
     for (_, layout) in batch_layouts.iter() {
         buffer

@@ -331,7 +331,7 @@ impl ZeroTensorProducer {
                     source: e,
                 })?
         };
-        let keys: Vec<&str> = layout.keys().map(|x| *x).collect();
+        let keys: Vec<&str> = layout.keys().copied().collect();
         let tensors_per_sample = keys.len();
         let mut caches: Vec<Mutex<TensorWriterCache<'_>>> = (0..batch_size)
             .map(|_| Mutex::new(TensorWriterCache::with_capacity(tensors_per_sample)))
@@ -371,10 +371,10 @@ impl ZeroTensorProducer {
             }
 
             let total_steps = epoch_step + current_epoch * steps_per_epoch;
-            if let Some(max) = self.max_steps {
-                if total_steps >= max {
-                    return Ok(());
-                }
+            if let Some(max) = self.max_steps
+                && total_steps >= max
+            {
+                return Ok(());
             }
 
             if epoch_step >= steps_per_epoch {
@@ -432,18 +432,20 @@ impl ZeroTensorProducer {
 
             let caches_ref: &mut [Mutex<TensorWriterCache<'_>>] =
                 unsafe { std::mem::transmute(&mut *caches) };
-
+            let batch_meta = (
+                &single_layouts,
+                &batch_layouts,
+                element_size_bytes,
+                meta,
+                total_data_bytes,
+            );
             helpers::copy_batch_to_shm(
                 &mut self.buffer,
                 &self.running,
                 dataset,
                 batch_indices,
                 offset,
-                &single_layouts,
-                &batch_layouts,
-                element_size_bytes,
-                meta,
-                total_data_bytes,
+                batch_meta,
                 caches_ref,
             )?;
 

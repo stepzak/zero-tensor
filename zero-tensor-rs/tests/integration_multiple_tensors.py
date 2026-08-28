@@ -16,7 +16,7 @@ def main():
     
     try:
         with ZeroTensorConsumer(socket_path, shm_name) as consumer:
-            for _ in range(1):
+            for _ in range(2):
                 step = 0
                 for batch in consumer:
                     assert "img" in batch, "Missing 'img' key"
@@ -33,8 +33,6 @@ def main():
                         
                         expected_img_vals = [(global_idx * 10 + j) for j in range(4)]
                         actual_img_vals = img[i].flatten().tolist()
-                        print(actual_img_vals, img.dtype)
-                        print(lbl)
                         assert torch.allclose(img[i], torch.tensor(expected_img_vals, dtype=torch.float32).reshape(2, 2)), \
                             f"Step {step}, Item {i}: Img mismatch. Expected {expected_img_vals}, got {actual_img_vals}"
                         

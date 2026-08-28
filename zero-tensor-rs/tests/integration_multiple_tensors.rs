@@ -106,7 +106,7 @@ fn test_e2e_batch_verification() {
             .to_path_buf();
 
         let python_project_dir = root_dir.join("zero-tensor-py");
-        let consumer_script = root_dir.join("zero-tensor-rs/tests/ip_1.py");
+        let consumer_script = root_dir.join("zero-tensor-rs/tests/integration_multiple_tensors.py");
         let python_path = python_project_dir.join("src");
 
         let status = Command::new("uv")
