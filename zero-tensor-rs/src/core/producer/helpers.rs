@@ -38,7 +38,7 @@ pub fn prepare_batch_metadata<'a, D: ZeroTensorDataset<'a>>(
         s.clone()
     } else {
         dataset
-            .dynamic_layouts(&[0])
+            .dynamic_layouts(batch_indices)
             .map_err(|e| ZTProducerErr::DatasetError {
                 idx: 0.into(),
                 source: e,
