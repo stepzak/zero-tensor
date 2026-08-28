@@ -1,6 +1,5 @@
 import time
 import pytest
-import torch
 from zero_tensor_py.consumer import ZeroTensorConsumer
 import zero_tensor_py.exceptions as exc
 from mocks.producer_mock import MockAsyncProducer
