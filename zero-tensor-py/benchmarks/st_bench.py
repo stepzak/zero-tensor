@@ -24,7 +24,6 @@ class DummyDataset(torch.utils.data.Dataset):
 
 
 def collate_with_transforms(batch):
-    batch.mul_(3)
     return batch
 
 
