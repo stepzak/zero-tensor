@@ -38,6 +38,7 @@ def benchmark_standard_loader():
         pin_memory=True,
         drop_last=True,
         collate_fn=collate_with_transforms,
+        prefetch_factor=3
     ) 
     
     print("[Bench] Starting Standard PyTorch DataLoader...")

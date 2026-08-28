@@ -8,7 +8,7 @@ Break the PyTorch `DataLoader` bottleneck. ZeroTensor is a high-performance, loc
 
 ## Key Features
 
--  **Blazing fast**: 24-26 GB/s sustained throughput (vs ~3-5 GB/s for PyTorch DataLoader)
+-  **Blazing fast**: 30-34 GB/s sustained throughput (vs ~6-7 GB/s for PyTorch DataLoader)
 -  **True zero-copy**: Consumer gets PyTorch tensors backed directly by shared memory via `torch.as_strided`
 -  **Multi-tensor support**: Stream multiple named tensors (`image`, `mask`, `label`) in a single batch
 -  **Dynamic batching**: Automatic padding to handle variable-size inputs
@@ -22,8 +22,8 @@ Benchmarks on a single socket (Intel/AMD CPU, DDR4/DDR5):
 
 | Loader | Throughput | Notes |
 |--------|-----------|-------|
-| **ZeroTensor** | **24-26 GB/s** | Zero-copy, Rust producer |
-| PyTorch DataLoader (8 workers, pin_memory) | 3-5 GB/s | Multiprocessing + copy |
+| **ZeroTensor** | **30-34 GB/s** | Zero-copy, Rust producer |
+| PyTorch DataLoader (8 workers, pin_memory, prefetch_factor = 3) | 6-7 GB/s | Multiprocessing + copy |
 
 > Benchmarked with `3×512×512` F32 tensors, batch size 48, 200 steps. See `zero-tensor-rs/src/bin/throughput_bench.rs` and `zero-tensor-py/benchmarks/zt_bench.py`.
 
