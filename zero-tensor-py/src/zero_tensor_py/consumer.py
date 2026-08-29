@@ -2,10 +2,13 @@ import collections
 import gc
 import mmap
 import os
+import queue
 import select
 import socket
 import struct
-from typing import Generator, Optional, Union, Dict
+import threading
+import time
+from typing import Generator, Optional, Union
 import atomics
 
 import torch
@@ -25,7 +28,9 @@ def _align_to(n: int, to: int) -> int:
 
 
 class ZeroTensorConsumer:
-    def __init__(self, socket_path: str, shm_name: str):
+    def __init__(self, socket_path: str, shm_name: str, prefetch_factor: int = 3):
+        if prefetch_factor <= 0:
+            raise ValueError(f"prefetch_factor must be greater than zero(received: {prefetch_factor})")
         self.socket_path = socket_path
         self.shm_name = os.path.join("/dev/shm", shm_name)
         self.slot_size = None
@@ -64,6 +69,13 @@ class ZeroTensorConsumer:
         self._keys = None
         self._slot_structure_cache = None
         self._total_meta_size = 0
+
+        self._running = False
+        self._prefetch_queue = None
+        self._prefetch_thread = None
+        self._prefetch_factor = prefetch_factor
+        self._prefetch_exc = None
+        self._prefetch_lock = threading.Lock()
 
     def _parse_handshake(self, handshake_str: str):
         parts = handshake_str.strip().split()
@@ -116,6 +128,7 @@ class ZeroTensorConsumer:
                 f"Invalid value in handshake: {e}. Full str: {handshake_str}"
             )
 
+
     def connect(self):
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         try:
@@ -163,12 +176,31 @@ class ZeroTensorConsumer:
             self._pending_releases: collections.deque = collections.deque()
             self._release_tail = self._load_tail()
             self._current_slot_idx = None
+            self._running = True
+            self._prefetch_queue = queue.Queue(maxsize = self._prefetch_factor + 1)
+            self._prefetch_exc = None
+            self._prefetch_thread = threading.Thread(
+                target=self._prefetch_worker,
+                name = "zt-prefetch-consumer",
+                daemon=True
+            )
+            self._prefetch_thread.start()
 
         except Exception as e:
             self.close()
             raise e
 
     def close(self):
+        self._running = False
+        if self._prefetch_thread is not None:
+            try:
+                while not self._prefetch_queue.empty():
+                    self._prefetch_queue.get_nowait()
+            except Exception:
+                pass
+            self._prefetch_thread.join(timeout=2.0)
+            
+        self._prefetch_thread = None
         if self.mem is not None and self.is_running_offset > 0:
             try:
                 self._store_is_running(0)
@@ -247,7 +279,7 @@ class ZeroTensorConsumer:
         raw = self.header_size + ndims * (self.shape_type_size + self.stride_type_size)
         return _align_to(raw, self.slot_alignment)
 
-    def _parse_slot(self, slot_offset: int) -> Dict[str, torch.Tensor]:
+    def _parse_slot(self, slot_offset: int) -> dict[str, torch.Tensor]:
         tensors = {}
         structure = []
         current_meta_offset = slot_offset
@@ -320,87 +352,111 @@ class ZeroTensorConsumer:
         return tensors
 
 
-    def __iter__(self) -> Generator[Dict[str, torch.Tensor], None, None]:
+    def __iter__(self) -> Generator[dict[str, torch.Tensor], None, None]:
         if self.sock is None or self.mem is None:
             raise RuntimeError("Consumer is not connected. Use 'with' or 'connect'")
         return self._iter_epoch()
-
-    def _iter_epoch(self) -> Generator[Dict[str, torch.Tensor], None, None]:
+    
+    def _iter_epoch(self) -> Generator[dict[str, torch.Tensor], None, None]:
         if self.mem is None:
             raise RuntimeError("Memory not mapped")
-
-        read_tail = self._load_tail()
+        
         try:
             while True:
-                is_running = self._load_is_running()
-                if is_running == 0:
-                    break
-
-                slot_idx = read_tail % self.nslots
-                if read_tail - self._release_tail >= self.nslots:
-                    self._drain_releases(force_up_to=read_tail - self.nslots + 1)
-
-                head = self._load_head()
-                while head <= read_tail:
-                    try:
-                        readable, _, _ = select.select(
-                            [self.sock], [], [], _SOCK_WAIT_POLL_TIMEOUT
-                        )
-                        if readable:
-                            is_running = self._load_is_running()
-                            if is_running == 0:
-                                return
-                            chunk = self.sock.recv(1024)
-                            if chunk == b"":
-                                raise zt_exc.ZTConnectionError("Producer disconnected")
-                            if _CONTROL_NEXT_EPOCH_MSG in chunk:
-                                return
-                        head = self._load_head()
-                    except BlockingIOError:
-                        pass
+                if self._prefetch_exc is not None:
+                    raise self._prefetch_exc
+                try:
+                    item = self._prefetch_queue.get(timeout = 0.1)
+                except queue.Empty:
+                    if not self._running or self._prefetch_thread is None or not self._prefetch_thread.is_alive():
+                        return
                     continue
 
-                slot_offset = self.cb_size + (slot_idx * self.slot_size)
-
-                while not self._load_is_ready(slot_offset):
-                    try:
-                        readable, _, _ = select.select(
-                            [self.sock], [], [], _SOCK_WAIT_POLL_TIMEOUT
-                        )
-                        if readable:
-                            is_running = self._load_is_running()
-                            if is_running == 0:
-                                return
-                            chunk = self.sock.recv(1024)
-                            if chunk == b"":
-                                raise zt_exc.ZTConnectionError("Producer disconnected")
-                            if _CONTROL_NEXT_EPOCH_MSG in chunk:
-                                return
-                    except BlockingIOError:
-                        pass
-
-                batch = self._parse_slot(slot_offset)
-
+                if item is None:
+                    if self._prefetch_exc is not None:
+                        raise self._prefetch_exc
+                    return
+                
+                batch, slot_idx, read_tail = item
                 self._current_slot_idx = slot_idx
-                self._pending_releases.append((slot_idx, None))
 
+                with self._prefetch_lock:
+                    if read_tail - self._release_tail >= self.nslots:
+                        self._drain_releases(read_tail - self.nslots + 1)
+
+                with self._prefetch_lock:
+                    self._pending_releases.append((slot_idx, None))
+                
                 try:
                     yield batch
                 finally:
                     self._current_slot_idx = None
-                    read_tail += 1
-                    self._drain_releases(self._release_tail)
+                    with self._prefetch_lock:
+                        self._drain_releases(self._release_tail)
         finally:
-            if self._pending_releases:
-                self._drain_releases(
-                    force_up_to=self._release_tail + len(self._pending_releases)
+            with self._prefetch_lock:
+                if self._pending_releases:
+                    self._drain_releases(self._release_tail + len(self._pending_releases))
+                self._current_slot_idx = None
+
+    
+    def _read_next_slot(self, read_tail: int) -> Optional[tuple[dict[str, torch.Tensor], int]]:
+        slot_idx = read_tail % self.nslots
+        slot_offset = self.cb_size + (slot_idx * self.slot_size)
+        while True:
+            is_running = self._load_is_running()
+            if is_running == 0:
+                return None
+            
+            head = self._load_head()
+            if head > read_tail:
+                break       
+            
+            try:
+                readable, _, _ = select.select(
+                    [self.sock], [], [], _SOCK_WAIT_POLL_TIMEOUT
                 )
-            self._current_slot_idx = None
+                if readable:
+                    is_running = self._load_is_running()
+                    if is_running == 0:
+                        return None
+                    chunk = self.sock.recv(1024)
+                    if chunk == b"":
+                        raise zt_exc.ZTConnectionError("Producer disconnected")
+                    if _CONTROL_NEXT_EPOCH_MSG in chunk:
+                        return None
+            except BlockingIOError:
+                pass
+            continue
+
+            
+
+        while not self._load_is_ready(slot_offset):
+            try:
+                readable, _, _ = select.select(
+                    [self.sock], [], [], _SOCK_WAIT_POLL_TIMEOUT
+                )
+                if readable:
+                    is_running = self._load_is_running()
+                    if is_running == 0:
+                        return None
+                    chunk = self.sock.recv(1024)
+                    if chunk == b"":
+                        raise zt_exc.ZTConnectionError("Producer disconnected")
+                    if _CONTROL_NEXT_EPOCH_MSG in chunk:
+                        return None
+            except BlockingIOError:
+                pass
+
+        batch = self._parse_slot(slot_offset)
+        return (batch, slot_idx)
+
+        
 
 
     def to_device(
         self,
-        tensor: Union[torch.Tensor, Dict[str, torch.Tensor]],
+        tensor: Union[torch.Tensor, dict[str, torch.Tensor]],
         device: Optional[torch.device] = None,
         dtype: Optional[torch.dtype] = None,
         non_blocking: bool = False,
@@ -408,7 +464,7 @@ class ZeroTensorConsumer:
         *,
         memory_format: Optional[torch.memory_format] = None,
         stream: Optional[torch.cuda.Stream] = None,
-    ) -> Union[torch.Tensor, Dict[str, torch.Tensor]]:
+    ) -> Union[torch.Tensor, dict[str, torch.Tensor]]:
         if self._current_slot_idx is None:
             raise RuntimeError("to_device() called outside active iteration")
 
@@ -461,8 +517,9 @@ class ZeroTensorConsumer:
         idx = self._current_slot_idx
         event = self._slot_events[idx]
         event.record(stream)
-        if self._pending_releases and self._pending_releases[-1][0] == idx:
-            self._pending_releases[-1] = (idx, event)
+        with self._prefetch_lock:
+            if self._pending_releases and self._pending_releases[-1][0] == idx:
+                self._pending_releases[-1] = (idx, event)
 
 
     def _drain_releases(self, force_up_to: int) -> None:
@@ -478,3 +535,28 @@ class ZeroTensorConsumer:
             self._pending_releases.popleft()
             self._release_tail += 1
             self._store_tail(self._release_tail)
+
+    def _prefetch_worker(self):
+        read_tail = self._load_tail()
+
+        try:
+            while self._running:
+                while self._prefetch_queue.qsize() >= self._prefetch_factor and self._running:
+                    time.sleep(_SOCK_WAIT_POLL_TIMEOUT)
+                
+                if not self._running:
+                    break
+
+                result = self._read_next_slot(read_tail)
+                if result is None:
+                    self._prefetch_queue.put(None)
+                    return
+                batch, slot_idx = result
+                self._prefetch_queue.put((batch, slot_idx, read_tail))
+                read_tail += 1
+        except Exception as e:
+            self._prefetch_exc = e
+            try:
+                self._prefetch_queue.put(None)
+            except Exception:
+                pass
