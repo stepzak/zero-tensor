@@ -5,7 +5,7 @@ use turbojpeg::{Compressor, Image as TjImage, PixelFormat};
 
 fn create_test_jpeg(width: usize, height: usize) -> Vec<u8> {
     let mut compressor = Compressor::new().expect("Failed to create compressor");
-    
+
     let mut pixels = vec![0u8; width * height * 3];
     for y in 0..height {
         for x in 0..width {
@@ -24,16 +24,18 @@ fn create_test_jpeg(width: usize, height: usize) -> Vec<u8> {
         format: PixelFormat::RGB,
     };
 
-    compressor.compress_to_vec(image).expect("Failed to compress JPEG")
+    compressor
+        .compress_to_vec(image)
+        .expect("Failed to compress JPEG")
 }
 
 #[test]
 fn test_jpeg_info() {
     let jpeg_bytes = create_test_jpeg(64, 64);
     let decoder = JpegDecoder::new();
-    
+
     let info = decoder.info(&jpeg_bytes).expect("Failed to read header");
-    
+
     assert_eq!(info.width, 64);
     assert_eq!(info.height, 64);
     assert_eq!(info.channels, 3);
@@ -46,20 +48,30 @@ fn test_jpeg_decode_u8_fast_path() {
     let height = 32;
     let jpeg_bytes = create_test_jpeg(width, height);
     let decoder = JpegDecoder::new();
-    
+
     let mut output = vec![0u8; width * height * 3];
-    let info = decoder.decode(&jpeg_bytes, &mut output).expect("Failed to decode");
-    
+    let info = decoder
+        .decode(&jpeg_bytes, &mut output)
+        .expect("Failed to decode");
+
     assert_eq!(info.width, width);
     assert_eq!(info.height, height);
-    
-    assert!(output.iter().any(|&x| x > 0), "Output should not be all zeros");
-    
+
+    assert!(
+        output.iter().any(|&x| x > 0),
+        "Output should not be all zeros"
+    );
 
     let idx = (20 * width + 10) * 3;
     assert!((output[idx] as i32 - 10).abs() < 5, "R channel mismatch");
-    assert!((output[idx + 1] as i32 - 20).abs() < 5, "G channel mismatch");
-    assert!((output[idx + 2] as i32 - 128).abs() < 5, "B channel mismatch");
+    assert!(
+        (output[idx + 1] as i32 - 20).abs() < 5,
+        "G channel mismatch"
+    );
+    assert!(
+        (output[idx + 2] as i32 - 128).abs() < 5,
+        "B channel mismatch"
+    );
 }
 
 #[test]
@@ -68,13 +80,15 @@ fn test_jpeg_decode_f32_thread_local_path() {
     let height = 16;
     let jpeg_bytes = create_test_jpeg(width, height);
     let decoder = JpegDecoder::new();
-    
+
     let mut output = vec![0.0f32; width * height * 3];
-    let info = decoder.decode(&jpeg_bytes, &mut output).expect("Failed to decode");
-    
+    let info = decoder
+        .decode(&jpeg_bytes, &mut output)
+        .expect("Failed to decode");
+
     assert_eq!(info.width, width);
     assert_eq!(info.height, height);
-    
+
     for (i, &val) in output.iter().enumerate() {
         assert!(
             val >= 0.0 && val <= 1.0,
@@ -83,22 +97,29 @@ fn test_jpeg_decode_f32_thread_local_path() {
             val
         );
     }
-    
-    assert!(output.iter().any(|&x| x > 0.0), "Output should not be all zeros");
+
+    assert!(
+        output.iter().any(|&x| x > 0.0),
+        "Output should not be all zeros"
+    );
 }
 
 #[test]
 fn test_jpeg_decode_buffer_too_small() {
     let jpeg_bytes = create_test_jpeg(32, 32);
     let decoder = JpegDecoder::new();
-    
+
     let required_size = 32 * 32 * 3;
     let mut output = vec![0u8; required_size / 2];
-    
+
     let result = decoder.decode(&jpeg_bytes, &mut output);
-    
+
     assert!(result.is_err());
-    if let Err(DecodeError::BufferOverflow { available, requested }) = result {
+    if let Err(DecodeError::BufferOverflow {
+        available,
+        requested,
+    }) = result
+    {
         assert_eq!(available, required_size / 2);
         assert_eq!(requested, required_size);
     } else {
@@ -110,8 +131,8 @@ fn test_jpeg_decode_buffer_too_small() {
 fn test_jpeg_decode_invalid_data() {
     let decoder = JpegDecoder::new();
     let mut output = vec![0u8; 100];
-    
+
     let result = decoder.decode(b"this is not a jpeg file", &mut output);
-    
+
     assert!(result.is_err(), "Should fail on invalid data");
 }
