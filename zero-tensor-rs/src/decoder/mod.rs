@@ -1,23 +1,30 @@
-pub mod pixel;
-pub mod error;
 pub mod default;
+pub mod error;
+pub mod pixel;
+pub use error::DecodeError;
 pub use pixel::Pixel;
-pub use error::DecoderError;
 
 #[derive(Debug, Clone, Copy)]
 pub enum ImageFormat {
-    JPEG
+    JPEG,
 }
 
+#[derive(Debug, Clone, Copy)]
 pub struct ImageInfo {
     width: usize,
     height: usize,
     channels: usize,
-    format: ImageFormat
+    format: ImageFormat,
 }
 
 pub trait ImageDecoder: Send + Sync {
-    fn decode<P: Pixel>(&self, compressed: &[u8], output: &mut [u8]) -> Result<ImageInfo, DecoderError>;
+    type Error: std::error::Error;
 
-    fn info(&self, compressed: &[u8]) -> Result<ImageInfo, DecoderError>;
+    fn decode<P: Pixel>(
+        &self,
+        compressed: &[u8],
+        output: &mut [P],
+    ) -> Result<ImageInfo, DecodeError<Self::Error>>;
+
+    fn info(&self, compressed: &[u8]) -> Result<ImageInfo, DecodeError<Self::Error>>;
 }

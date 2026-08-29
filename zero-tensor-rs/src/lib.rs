@@ -1,7 +1,7 @@
 pub mod core;
+mod decoder;
 pub mod pipeline;
 pub mod transform;
-mod decoder;
 
 #[cfg(test)]
 mod tests {
