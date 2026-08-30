@@ -22,7 +22,7 @@ pub enum JpegFolderDatasetNewError<D: std::error::Error = turbojpeg::Error> {
     DecodeError(PathBuf, DecodeError<D>),
 
     #[error("WalkDirError: {0}")]
-    WalkDirError(walkdir::Error)
+    WalkDirError(#[from] walkdir::Error),
 }
 
 #[derive(Error, Debug)]
@@ -35,6 +35,9 @@ pub enum JpegFolderDatasetError<D: std::error::Error = turbojpeg::Error> {
 
     #[error("TensorWrite error at {0}: {1}")]
     WriteError(PathBuf, Box<TensorWriteError<Self>>),
+
+    #[error("Buffer too small. Needeed : {needed}, got {got}")]
+    BufferTooSmall { needed: usize, got: usize },
 }
 
 impl ZTDatasetError for JpegFolderDatasetError {

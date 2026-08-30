@@ -33,13 +33,19 @@ impl ImageDecoder for JpegDecoder {
         ))
     }
 
-    fn decode<P: crate::decoder::Pixel>(
+    fn decode<P: crate::decoder::Pixel, T: Into<Option<usize>>>(
         &self,
         compressed: &[u8],
         output: &mut [P],
+        stride: T,
     ) -> Result<crate::decoder::ImageInfo, DecodeError<Self::Error>> {
         let header = self.info(compressed)?;
-        let total = header.width * header.height * header.channels;
+        
+        let stride = stride.into().unwrap_or(header.width);
+        if stride < header.width {
+            return Err(DecodeError::InvalidStride(stride, header.width));
+        }
+        let total = stride * header.height * header.channels;
         if total > output.len() {
             return Err(DecodeError::BufferOverflow {
                 available: output.len(),
@@ -53,7 +59,7 @@ impl ImageDecoder for JpegDecoder {
             let target_image = Image {
                 pixels: u8_output,
                 width: header.width,
-                pitch: header.width * 3,
+                pitch: stride * 3,
                 height: header.height,
                 format: PixelFormat::RGB,
             };
@@ -75,10 +81,29 @@ impl ImageDecoder for JpegDecoder {
                 format: PixelFormat::RGB,
             };
             decompressor.decompress(compressed, target_image)?;
-            let pixels = &mut raw_pixels[..total];
 
-            for (pixel, byte) in output[..total].iter_mut().zip(pixels.iter()) {
-                *pixel = P::from_u8(*byte);
+            let width = header.width;
+            let height = header.height;
+            let channels = header.channels;
+            for y in 0..height {
+                for x in 0..width {
+                    for c in 0..channels {
+                        let src_idx = (y * width + x) * channels + c;
+                        let dst_idx = (y * stride + x) * channels + c;
+                        output[dst_idx] = P::from_u8(raw_pixels[src_idx]);
+                    }
+                }
+            }
+
+            if stride > width {
+                for y in 0..height {
+                    for x in width..stride {
+                        for c in 0..channels {
+                            let dst_idx = (y * stride + x) * channels + c;
+                            output[dst_idx] = P::from_u8(0);
+                        }
+                    }
+                }
             }
             Ok(())
         })?;

@@ -7,4 +7,7 @@ pub enum DecodeError<D: Error> {
 
     #[error("Decoder error: {0}")]
     DecoderError(#[from] D),
+
+    #[error("Invalid stride: {0} (minimum is: {1}")]
+    InvalidStride(usize, usize)
 }

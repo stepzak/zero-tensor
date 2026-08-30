@@ -53,7 +53,7 @@ fn test_jpeg_decode_u8_fast_path() {
 
     let mut output = vec![0u8; width * height * 3];
     let info = decoder
-        .decode(&jpeg_bytes, &mut output)
+        .decode(&jpeg_bytes, &mut output, None)
         .expect("Failed to decode");
 
     assert_eq!(info.width, width);
@@ -86,7 +86,7 @@ fn test_jpeg_decode_f32_thread_local_path() {
 
     let mut output = vec![0.0f32; width * height * 3];
     let info = decoder
-        .decode(&jpeg_bytes, &mut output)
+        .decode(&jpeg_bytes, &mut output, None)
         .expect("Failed to decode");
 
     assert_eq!(info.width, width);
@@ -115,7 +115,7 @@ fn test_jpeg_decode_buffer_too_small() {
     let required_size = 32 * 32 * 3;
     let mut output = vec![0u8; required_size / 2];
 
-    let result = decoder.decode(&jpeg_bytes, &mut output);
+    let result = decoder.decode(&jpeg_bytes, &mut output, None);
 
     assert!(result.is_err());
     if let Err(DecodeError::BufferOverflow {
@@ -135,7 +135,7 @@ fn test_jpeg_decode_invalid_data() {
     let decoder = JpegDecoder::new();
     let mut output = vec![0u8; 100];
 
-    let result = decoder.decode(b"this is not a jpeg file", &mut output);
+    let result = decoder.decode(b"this is not a jpeg file", &mut output, None);
 
     assert!(result.is_err(), "Should fail on invalid data");
 }

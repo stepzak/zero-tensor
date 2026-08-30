@@ -47,10 +47,11 @@ impl ImageInfo {
 pub trait ImageDecoder: Send + Sync {
     type Error: std::error::Error;
 
-    fn decode<P: Pixel>(
+    fn decode<P: Pixel, T: Into<Option<usize>>>(
         &self,
         compressed: &[u8],
         output: &mut [P],
+        stride: T,
     ) -> Result<ImageInfo, DecodeError<Self::Error>>;
 
     fn info(&self, compressed: &[u8]) -> Result<ImageInfo, DecodeError<Self::Error>>;
