@@ -4,6 +4,7 @@ pub mod tensor_meta;
 #[cfg(test)]
 mod tests;
 
+use indexmap::IndexMap;
 use std::{
     ffi::{self, CString, c_int, c_void},
     ptr,
@@ -12,6 +13,8 @@ use std::{
 use thiserror::Error;
 
 use libc::{mode_t, shm_open};
+
+use crate::core::{dataset::item::TensorBatchLayout, helpers::align_to, writer::TensorWriter};
 
 use super::{
     buffer::{
@@ -67,6 +70,20 @@ pub fn get_dt_size(dt: TensorDT) -> usize {
 }
 
 impl ZeroTensorBuffer {
+    pub fn calculate_slot_size(
+        layouts: &IndexMap<&str, TensorBatchLayout>,
+        batch_size: usize,
+    ) -> u64 {
+        let mut size = size_of::<TensorHeader>();
+        for (_, v) in layouts {
+            let layout_size = align_to(size_of_val(v), TensorWriter::ALIGNMENT);
+            let data_size = align_to(v.total_bytes() * batch_size, TensorWriter::ALIGNMENT);
+            size += layout_size + data_size;
+        }
+
+        align_to(size, ZeroTensorControlBlock::recommended_slot_alignment()) as u64
+    }
+
     fn open_shm(file_name: &CString, oflag: c_int, mode: mode_t) -> Result<i32, ZTBufErr> {
         unsafe {
             let fd = shm_open(file_name.as_ptr(), oflag, mode);
@@ -213,8 +230,6 @@ impl ZeroTensorBuffer {
         let data_size = get_dt_size(dt) * data_count;
         let t_size = offset + offs.data() + data_size;
         if t_size > self.total_size {
-            println!("err write");
-
             return Err(ZTBufErr::BufferOverflow(self.total_size, t_size));
         }
 
@@ -246,7 +261,6 @@ impl ZeroTensorBuffer {
     ) -> Result<&mut [u8], ZTBufErr> {
         let t_size = slot_offset + data_offset_in_slot + len;
         if t_size > self.total_size {
-            println!("err slice mut");
             return Err(ZTBufErr::BufferOverflow(self.total_size, t_size));
         }
         let ptr = unsafe { self.addr.add(slot_offset).add(data_offset_in_slot) };
@@ -261,7 +275,6 @@ impl ZeroTensorBuffer {
     ) -> Result<&[u8], ZTBufErr> {
         let t_size = slot_offset + data_offset_in_slot + len;
         if t_size > self.total_size {
-            println!("err 1");
             return Err(ZTBufErr::BufferOverflow(self.total_size, t_size));
         }
         let ptr = unsafe { self.addr.add(slot_offset).add(data_offset_in_slot) };

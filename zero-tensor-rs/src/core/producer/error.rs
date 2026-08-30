@@ -46,4 +46,7 @@ pub enum ZTProducerErr<E: ZTDatasetError + 'static> {
 
     #[error("Tensor WriteR error: {0}")]
     TensorWriterError(TensorWriterError),
+
+    #[error("Empty dataset")]
+    EmptyDataset,
 }

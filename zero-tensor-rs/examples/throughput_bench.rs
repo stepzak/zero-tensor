@@ -1,13 +1,11 @@
 use indexmap::IndexMap;
 use std::path::Path;
 use zero_tensor_lib::core::{
-    buffer::tensor_meta::TensorHeader,
     dataset::{
         ZeroTensorDataset,
-        item::{ShapeType, StrideType, TensorBatchLayout, TensorDT},
+        item::{ShapeType, TensorBatchLayout, TensorDT},
     },
     producer::ZeroTensorProducerBuilder,
-    writer::TensorWriter,
 };
 
 const BATCH_SIZE: usize = 48;
@@ -80,28 +78,21 @@ fn main() {
 
     let item_elements = CHANNELS * HEIGHT * WIDTH;
     let raw_item_size = item_elements * 4;
+    let dataset = BenchDataset::new(raw_item_size);
 
-    let ndims = 3;
-    let tensor_header_size = size_of::<TensorHeader>();
-    let shape_stride_size = size_of::<ShapeType>() + size_of::<StrideType>();
-    let per_tensor_meta = tensor_header_size + ndims * shape_stride_size;
-    let metadata_size_per_item =
-        (per_tensor_meta + TensorWriter::ALIGNMENT - 1) & !(TensorWriter::ALIGNMENT - 1);
+    let builder = ZeroTensorProducerBuilder::from_dataset(
+        &dataset,
+        shm_name,
+        socket_path,
+        BATCH_SIZE,
+        BATCH_SIZE,
+    )
+    .expect("Failed to create builder");
 
-    let data_size_per_item =
-        (raw_item_size + TensorWriter::ALIGNMENT - 1) & !(TensorWriter::ALIGNMENT - 1);
-    let element_size = metadata_size_per_item + data_size_per_item;
-
-    let slot_size = (element_size * BATCH_SIZE) as u64;
+    let slot_size = builder.slot_size;
 
     println!("[Rust Bench] Initializing ZeroTensorProducer...");
     println!(" -> SHM Name: {}", shm_name);
-    println!(
-        " -> Metadata size per item: {} bytes",
-        metadata_size_per_item
-    );
-    println!(" -> Data size per item: {} bytes", data_size_per_item);
-    println!(" -> Element size per item: {} bytes", element_size);
     println!(
         " -> Slot Size: {:.2} MB",
         slot_size as f64 / 1024.0 / 1024.0
@@ -111,12 +102,10 @@ fn main() {
         (slot_size * NSLOTS) as f64 / 1024.0 / 1024.0
     );
 
-    let mut producer = ZeroTensorProducerBuilder::new(slot_size, shm_name, socket_path)
+    let mut producer = builder
         .num_slots(NSLOTS)
         .build()
         .expect("Failed to create producer");
-
-    let dataset = BenchDataset::new(raw_item_size);
 
     println!("[Rust Bench] Ready! Waiting for Python consumer to connect...");
 

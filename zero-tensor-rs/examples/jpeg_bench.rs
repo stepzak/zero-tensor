@@ -71,22 +71,6 @@ fn main() {
     let shm_name = "zt_bench";
     let num_slots = 16;
 
-    let max_width = 400;
-    let max_height = 400;
-
-    let image_bytes = 3 * max_width * max_height * 4;
-    let batch_data_bytes = batch_size * image_bytes;
-    let batch_label_bytes = batch_size * 8;
-    let metadata_overhead = 8192;
-
-    let slot_size = batch_data_bytes + batch_label_bytes + metadata_overhead;
-
-    println!(
-        "[Rust] Slot size: {} bytes ({:.2} MB)",
-        slot_size,
-        slot_size as f64 / 1024.0 / 1024.0
-    );
-
     generate_dataset(&dataset_dir, num_images, num_classes);
 
     println!("[Rust] Initializing JpegFolderDataset...");
@@ -104,6 +88,28 @@ fn main() {
 
     let dataset = JpegFolderDataset::new(&dataset_dir, label_fn, TensorDT::F32)
         .expect("Failed to create dataset");
+
+    let builder = ZeroTensorProducerBuilder::from_dataset(
+        &dataset,
+        shm_name,
+        socket_path,
+        batch_size,
+        num_images,
+    )
+    .expect("Failed to create builder");
+
+    let slot_size = builder.slot_size;
+    let mut producer = builder
+        .num_slots(num_slots)
+        .build()
+        .expect("Failed to build producer");
+
+    println!(
+        "[Rust] Slot size: {} bytes ({:.2} MB)",
+        slot_size,
+        slot_size as f64 / 1024.0 / 1024.0
+    );
+
     let init_time = start_init.elapsed();
     println!(
         "[Rust] Dataset initialized in {:.2}s ({} images)",
@@ -112,10 +118,6 @@ fn main() {
     );
 
     println!("[Rust] Creating Producer...");
-    let mut producer = ZeroTensorProducerBuilder::new(slot_size as u64, shm_name, socket_path)
-        .num_slots(num_slots)
-        .build()
-        .expect("Failed to build producer");
 
     println!("[Rust] Producer created. Waiting for Consumer to connect...");
     println!("[Rust] Socket: {}", socket_path);
