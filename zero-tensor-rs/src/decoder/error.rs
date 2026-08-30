@@ -9,5 +9,5 @@ pub enum DecodeError<D: Error> {
     DecoderError(#[from] D),
 
     #[error("Invalid stride: {0} (minimum is: {1}")]
-    InvalidStride(usize, usize)
+    InvalidStride(usize, usize),
 }

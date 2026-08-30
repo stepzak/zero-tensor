@@ -14,7 +14,7 @@ pub struct ImageInfo {
     width: usize,
     height: usize,
     channels: usize,
-    format: ImageFormat,
+    _format: ImageFormat,
 }
 
 impl ImageInfo {
@@ -23,7 +23,7 @@ impl ImageInfo {
             width,
             height,
             channels,
-            format: image_format,
+            _format: image_format,
         }
     }
 
@@ -39,8 +39,9 @@ impl ImageInfo {
         self.channels
     }
 
+    #[allow(dead_code)]
     pub fn format(&self) -> ImageFormat {
-        self.format
+        self._format
     }
 }
 

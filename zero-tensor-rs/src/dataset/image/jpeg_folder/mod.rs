@@ -45,14 +45,14 @@ impl JpegFolderDataset {
         for entry in walkdir::WalkDir::new(root).into_iter() {
             let entry = entry.map_err(JpegFolderDatasetNewError::WalkDirError)?;
             let path = entry.path();
-            if path.is_file() {
-                if let Some(extos) = path.extension() {
-                    let ext = extos.to_string_lossy();
-                    if ext == "jpg" || ext == "jpeg" {
-                        if let Some(label) = label_fn(path) {
-                            samples.push((path.into(), label));
-                        }
-                    }
+            if path.is_file()
+                && let Some(extos) = path.extension()
+            {
+                let ext = extos.to_string_lossy();
+                if (ext == "jpg" || ext == "jpeg")
+                    && let Some(label) = label_fn(path)
+                {
+                    samples.push((path.into(), label));
                 }
             }
         }
@@ -194,76 +194,4 @@ impl<'a> ZeroTensorDataset<'a> for JpegFolderDataset {
 }
 
 #[cfg(test)]
-mod dataset_tests {
-    use super::*;
-    use tempfile::TempDir;
-    use turbojpeg::Compressor;
-    
-    fn save_test_jpeg(path: &Path, width: usize, height: usize) {
-        let mut compressor = Compressor::new().unwrap();
-        let mut pixels = vec![128u8; width * height * 3];
-        
-        for y in 0..height {
-            for x in 0..width {
-                pixels[(y * width + x) * 3] = (x % 256) as u8;
-            }
-        }
-
-        let image = turbojpeg::Image {
-            pixels: pixels.as_slice(),
-            width,
-            pitch: width * 3,
-            height,
-            format: turbojpeg::PixelFormat::RGB,
-        };
-        
-        let jpeg_data = compressor.compress_to_vec(image).unwrap();
-        std::fs::write(path, jpeg_data).unwrap();
-    }
-
-    #[test]
-    fn test_jpeg_folder_dataset_e2e() {
-        let temp_dir = TempDir::new().unwrap();
-        let root = temp_dir.path();
-
-        let class_a = root.join("class_a");
-        let class_b = root.join("class_b");
-        std::fs::create_dir(&class_a).unwrap();
-        std::fs::create_dir(&class_b).unwrap();
-
-        save_test_jpeg(&class_a.join("img1.jpg"), 64, 64);
-        save_test_jpeg(&class_b.join("img2.jpg"), 100, 80);
-
-        let label_fn = |path: &Path| {
-            path.parent().unwrap().file_name().unwrap().to_str().map(|name| {
-                if name == "class_a" { 0 } else { 1 }
-            })
-        };
-
-        let dataset = JpegFolderDataset::new(root, label_fn, TensorDT::F32).unwrap();
-        assert_eq!(dataset.len(), 2);
-
-        let layouts = dataset.dynamic_layouts(&[0, 1]).unwrap();
-        
-        let img_layout = layouts.get("image").unwrap();
-        assert_eq!(img_layout.shape(), &[3, 80, 100]);
-        
-        let lbl_layout = layouts.get("label").unwrap();
-        assert_eq!(lbl_layout.shape(), &[]); 
-
-        
-        let max_elements = 3 * 80 * 100;
-        let mut mock_buf = vec![0u8; max_elements * std::mem::size_of::<f32>()];
-
-        let bytes_written = dataset.inner_write::<f32>(0, &mut mock_buf).unwrap();
-        
-        let expected_bytes = 100 * 64 * 3 * 4;
-        assert_eq!(bytes_written, expected_bytes);
-
-        let f32_view = bytemuck::cast_slice::<u8, f32>(&mock_buf);
-        let padding_pixel_idx = 64 * 3; 
-        println!("{}", f32_view[3]);
-        assert_eq!(f32_view[padding_pixel_idx], 0.0, "Padding should be zeroed");
-        assert!(f32_view[4] > 0.0, "Real data should be present");
-    }
-}
+mod tests;

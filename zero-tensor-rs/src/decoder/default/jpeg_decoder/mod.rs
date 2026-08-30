@@ -40,7 +40,7 @@ impl ImageDecoder for JpegDecoder {
         stride: T,
     ) -> Result<crate::decoder::ImageInfo, DecodeError<Self::Error>> {
         let header = self.info(compressed)?;
-        
+
         let stride = stride.into().unwrap_or(header.width);
         if stride < header.width {
             return Err(DecodeError::InvalidStride(stride, header.width));
@@ -74,7 +74,7 @@ impl ImageDecoder for JpegDecoder {
             let pixels = &mut raw_pixels[..total];
 
             let target_image = Image {
-                pixels: pixels,
+                pixels,
                 width: header.width,
                 pitch: header.width * 3,
                 height: header.height,

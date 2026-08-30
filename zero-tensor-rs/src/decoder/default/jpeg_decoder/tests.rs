@@ -41,7 +41,7 @@ fn test_jpeg_info() {
     assert_eq!(info.width, 64);
     assert_eq!(info.height, 64);
     assert_eq!(info.channels, 3);
-    assert!(matches!(info.format, crate::decoder::ImageFormat::Jpeg));
+    assert!(matches!(info.format(), crate::decoder::ImageFormat::Jpeg));
 }
 
 #[test]
