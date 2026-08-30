@@ -2,7 +2,7 @@ use std::cell::RefCell;
 
 use turbojpeg::{Decompressor, Image, PixelFormat};
 
-use crate::decoder::{DecodeError, ImageDecoder, ImageInfo};
+use crate::decoder::{DecodeError, ImageDecoder, ImageFormat, ImageInfo};
 
 pub struct JpegDecoder;
 
@@ -25,12 +25,12 @@ impl ImageDecoder for JpegDecoder {
         let mut decompressor = Decompressor::new()?;
         let header = decompressor.read_header(compressed)?;
 
-        Ok(ImageInfo {
-            width: header.width,
-            height: header.height,
-            channels: 3,
-            format: crate::decoder::ImageFormat::JPEG,
-        })
+        Ok(ImageInfo::new(
+            header.width,
+            header.height,
+            3,
+            ImageFormat::JPEG,
+        ))
     }
 
     fn decode<P: crate::decoder::Pixel>(

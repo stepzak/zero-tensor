@@ -45,11 +45,7 @@ impl<'a, 'b, 'c> TensorWriter<'a, 'b, 'c> {
         self.cache.get_offset_size(key)
     }
 
-    pub fn write<F, E>(
-        &mut self,
-        key: &'a str,
-        write_fn: F,
-    ) -> Result<usize, TensorWriteError<'a, E>>
+    pub fn write<F, E>(&mut self, key: &'a str, write_fn: F) -> Result<usize, TensorWriteError<E>>
     where
         F: FnOnce(&mut [u8]) -> Result<usize, E>,
         E: std::error::Error,
@@ -57,15 +53,15 @@ impl<'a, 'b, 'c> TensorWriter<'a, 'b, 'c> {
         let (offset, size) = self
             .cache
             .get_offset_size(key)
-            .ok_or(TensorWriteError::UnknownKey(key))?;
+            .ok_or(TensorWriteError::UnknownKey(key.into()))?;
         let idx = self.cache.slot_buffers().get_key_pos(key).unwrap();
         if self.cache.written()[idx] {
-            return Err(TensorWriteError::KeyExists(key));
+            return Err(TensorWriteError::KeyExists(key.into()));
         }
 
         if offset + size > self.slot_buffer.len() {
             return Err(TensorWriteError::BufferOutOfBounds {
-                key,
+                key: key.into(),
                 offset: offset + size,
                 total_size: self.slot_buffer.len(),
             });
@@ -76,7 +72,7 @@ impl<'a, 'b, 'c> TensorWriter<'a, 'b, 'c> {
         let written = write_fn(buf).map_err(|e| TensorWriteError::DatasetError { source: e })?;
         if written > size {
             return Err(TensorWriteError::BufferOutOfBounds {
-                key,
+                key: key.into(),
                 offset: written,
                 total_size: size,
             });

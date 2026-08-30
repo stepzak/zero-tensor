@@ -2,10 +2,6 @@ use bytemuck::Pod;
 
 pub trait Pixel: Pod + Copy + Send + Sync + 'static {
     fn from_u8(value: u8) -> Self;
-
-    fn size_of() -> usize {
-        size_of::<Self>()
-    }
 }
 
 impl Pixel for u8 {

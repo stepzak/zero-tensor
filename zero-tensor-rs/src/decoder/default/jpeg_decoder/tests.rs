@@ -1,3 +1,5 @@
+use std::assert_matches;
+
 use crate::decoder::*;
 
 use super::*;
@@ -63,6 +65,7 @@ fn test_jpeg_decode_u8_fast_path() {
     );
 
     let idx = (20 * width + 10) * 3;
+    assert_matches!(info.format(), ImageFormat::JPEG);
     assert!((output[idx] as i32 - 10).abs() < 5, "R channel mismatch");
     assert!(
         (output[idx + 1] as i32 - 20).abs() < 5,

@@ -17,6 +17,33 @@ pub struct ImageInfo {
     format: ImageFormat,
 }
 
+impl ImageInfo {
+    pub fn new(width: usize, height: usize, channels: usize, image_format: ImageFormat) -> Self {
+        Self {
+            width,
+            height,
+            channels,
+            format: image_format,
+        }
+    }
+
+    pub fn height(&self) -> usize {
+        self.height
+    }
+
+    pub fn width(&self) -> usize {
+        self.width
+    }
+
+    pub fn channels(&self) -> usize {
+        self.channels
+    }
+
+    pub fn format(&self) -> ImageFormat {
+        self.format
+    }
+}
+
 pub trait ImageDecoder: Send + Sync {
     type Error: std::error::Error;
 
