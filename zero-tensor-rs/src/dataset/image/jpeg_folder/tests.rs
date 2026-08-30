@@ -52,14 +52,14 @@ fn test_jpeg_folder_dataset_e2e() {
 
     let layouts = dataset.dynamic_layouts(&[0, 1]).unwrap();
     let img_layout = layouts.get("image").unwrap();
-    assert_eq!(img_layout.shape(), &[3, 80, 100]); 
+    assert_eq!(img_layout.shape(), &[3, 80, 100]);
 
     let max_elements = 3 * 80 * 100;
     let mut mock_buf = vec![0u8; max_elements * std::mem::size_of::<f32>()];
 
     let bytes_written = dataset.inner_write::<f32>(0, &mut mock_buf).unwrap();
 
-    let expected_bytes = 100 * 64 * 3 * 4;
+    let expected_bytes = 100 * 80 * 3 * 4;
     assert_eq!(bytes_written, expected_bytes);
 
     let f32_view = bytemuck::cast_slice::<u8, f32>(&mock_buf);
@@ -88,7 +88,6 @@ fn test_jpeg_folder_dataset_e2e() {
         0.0,
         "Right padding should be zeroed"
     );
-
 
     let bottom_padding_idx = (64 * 100 + 0) * 3;
     assert_eq!(

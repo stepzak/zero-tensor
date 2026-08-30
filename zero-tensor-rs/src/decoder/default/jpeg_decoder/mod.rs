@@ -2,7 +2,7 @@ use std::cell::RefCell;
 
 use turbojpeg::{Decompressor, Image, PixelFormat};
 
-use crate::decoder::{DecodeError, ImageDecoder, ImageFormat, ImageInfo};
+use crate::decoder::{DecodeError, ImageDecoder, ImageFormat, ImageInfo, PaddingConfig};
 
 pub struct JpegDecoder;
 
@@ -33,37 +33,69 @@ impl ImageDecoder for JpegDecoder {
         ))
     }
 
-    fn decode<P: crate::decoder::Pixel, T: Into<Option<usize>>>(
+    fn decode<P: crate::decoder::Pixel, T: Into<Option<PaddingConfig>>>(
         &self,
         compressed: &[u8],
         output: &mut [P],
-        stride: T,
+        padding_config: T,
     ) -> Result<crate::decoder::ImageInfo, DecodeError<Self::Error>> {
         let header = self.info(compressed)?;
+        let width = header.width;
+        let height = header.height;
+        let channels = header.channels;
 
-        let stride = stride.into().unwrap_or(header.width);
-        if stride < header.width {
-            return Err(DecodeError::InvalidStride(stride, header.width));
+        let PaddingConfig { stride, max_height } = padding_config.into().unwrap_or(PaddingConfig {
+            stride: width,
+            max_height: height,
+        });
+
+        if stride < width {
+            return Err(DecodeError::InvalidStride(stride, width));
         }
-        let total = stride * header.height * header.channels;
+        if max_height < height {
+            return Err(DecodeError::InvalidStride(max_height, width)); 
+        }
+
+        let total = stride * max_height * channels;
         if total > output.len() {
             return Err(DecodeError::BufferOverflow {
                 available: output.len(),
                 requested: total,
             });
         }
+
         let mut decompressor = Decompressor::new()?;
+
         if std::any::TypeId::of::<P>() == std::any::TypeId::of::<u8>() {
             let u8_output: &mut [u8] = bytemuck::cast_slice_mut(&mut output[..total]);
 
             let target_image = Image {
                 pixels: u8_output,
-                width: header.width,
-                pitch: stride * 3,
-                height: header.height,
+                width,
+                pitch: stride * channels,
+                height,
                 format: PixelFormat::RGB,
             };
             decompressor.decompress(compressed, target_image)?;
+
+            if stride > width {
+                let u8_output: &mut [u8] = bytemuck::cast_slice_mut(&mut output[..total]);
+
+                for y in 0..height {
+                    let pad_start = (y * stride + width) * channels;
+                    let pad_end = (y * stride + stride) * channels;
+                    u8_output[pad_start..pad_end].fill(0);
+                }
+            }
+
+            if max_height > height {
+                let u8_output: &mut [u8] = bytemuck::cast_slice_mut(&mut output[..total]);
+
+                let bottom_start = height * stride * channels;
+                let bottom_end = max_height * stride * channels;
+                u8_output[bottom_start..bottom_end].fill(0);
+            }
+
             return Ok(header);
         }
 
@@ -75,36 +107,35 @@ impl ImageDecoder for JpegDecoder {
 
             let target_image = Image {
                 pixels,
-                width: header.width,
-                pitch: header.width * 3,
-                height: header.height,
+                width,
+                pitch: stride * channels,
+                height,
                 format: PixelFormat::RGB,
             };
             decompressor.decompress(compressed, target_image)?;
+            let pixels = &mut raw_pixels[..total];
 
-            let width = header.width;
-            let height = header.height;
-            let channels = header.channels;
             for y in 0..height {
-                for x in 0..width {
-                    for c in 0..channels {
-                        let src_idx = (y * width + x) * channels + c;
-                        let dst_idx = (y * stride + x) * channels + c;
-                        output[dst_idx] = P::from_u8(raw_pixels[src_idx]);
-                    }
+                let row_start = y * stride * channels;
+                let row_end = row_start + width * channels;
+
+                for i in row_start..row_end {
+                    output[i] = P::from_u8(pixels[i]);
+                }
+
+                if stride > width {
+                    let row_max_end = row_start + stride * channels;
+                    output[row_end..row_max_end].fill(P::from_u8(0));
                 }
             }
 
-            if stride > width {
-                for y in 0..height {
-                    for x in width..stride {
-                        for c in 0..channels {
-                            let dst_idx = (y * stride + x) * channels + c;
-                            output[dst_idx] = P::from_u8(0);
-                        }
-                    }
-                }
+            // Обнуляем нижний остаток для кастомного типа P
+            if max_height > height {
+                let bottom_start = height * stride * channels;
+                let bottom_end = max_height * stride * channels;
+                output[bottom_start..bottom_end].fill(P::from_u8(0));
             }
+
             Ok(())
         })?;
 

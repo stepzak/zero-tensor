@@ -17,6 +17,12 @@ pub struct ImageInfo {
     _format: ImageFormat,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct PaddingConfig {
+    pub stride: usize,
+    pub max_height: usize,
+}
+
 impl ImageInfo {
     pub fn new(width: usize, height: usize, channels: usize, image_format: ImageFormat) -> Self {
         Self {
@@ -48,7 +54,7 @@ impl ImageInfo {
 pub trait ImageDecoder: Send + Sync {
     type Error: std::error::Error;
 
-    fn decode<P: Pixel, T: Into<Option<usize>>>(
+    fn decode<P: Pixel, T: Into<Option<PaddingConfig>>>(
         &self,
         compressed: &[u8],
         output: &mut [P],

@@ -16,7 +16,7 @@ use crate::{
         ZeroTensorDataset,
         item::{ShapeVec, StrideVec, TensorBatchLayout, TensorDT},
     },
-    decoder::{DecodeError, ImageDecoder, ImageInfo, Pixel, default::JpegDecoder},
+    decoder::{DecodeError, ImageDecoder, ImageInfo, PaddingConfig, Pixel, default::JpegDecoder},
 };
 
 pub struct JpegFolderDataset {
@@ -25,7 +25,7 @@ pub struct JpegFolderDataset {
     infos: Vec<ImageInfo>,
     decoder: JpegDecoder,
     dt: TensorDT,
-    current_batch_max: RwLock<usize>,
+    current_batch_max: RwLock<PaddingConfig>,
 }
 
 impl JpegFolderDataset {
@@ -87,7 +87,10 @@ impl JpegFolderDataset {
             infos,
             decoder,
             dt,
-            current_batch_max: RwLock::new(0),
+            current_batch_max: RwLock::new(PaddingConfig {
+                stride: 0,
+                max_height: 0,
+            }),
         })
     }
 
@@ -105,8 +108,8 @@ impl JpegFolderDataset {
         let stride = *self.current_batch_max.read();
         let info = self
             .decoder
-            .decode::<T, usize>(compressed, output, stride)?;
-        let actual_size = stride * info.height() * info.channels() * elem_size;
+            .decode::<T, PaddingConfig>(compressed, output, stride)?;
+        let actual_size = stride.stride * stride.max_height * info.channels() * elem_size;
         Ok(actual_size)
     }
 }
@@ -140,7 +143,10 @@ impl<'a> ZeroTensorDataset<'a> for JpegFolderDataset {
             }
         }
 
-        *self.current_batch_max.write() = max_w;
+        *self.current_batch_max.write() = PaddingConfig {
+            stride: max_w,
+            max_height: max_h,
+        };
 
         let mut img_shape = ShapeVec::new();
         img_shape.extend_from_slice(&[3, max_h, max_w]);

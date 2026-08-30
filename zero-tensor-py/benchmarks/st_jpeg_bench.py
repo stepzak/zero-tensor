@@ -35,7 +35,7 @@ def benchmark_pytorch():
     warmup_batches = 5
     target_batches = 150
     
-    print("[PyTorch] Initializing ImageFolder (без Resize)...")
+    print("[PyTorch] Initializing ImageFolder...")
     start_init = time.time()
     
     transform = transforms.Compose([
