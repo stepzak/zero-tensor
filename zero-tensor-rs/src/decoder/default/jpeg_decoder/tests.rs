@@ -41,7 +41,7 @@ fn test_jpeg_info() {
     assert_eq!(info.width, 64);
     assert_eq!(info.height, 64);
     assert_eq!(info.channels, 3);
-    assert!(matches!(info.format, crate::decoder::ImageFormat::JPEG));
+    assert!(matches!(info.format, crate::decoder::ImageFormat::Jpeg));
 }
 
 #[test]
@@ -65,7 +65,7 @@ fn test_jpeg_decode_u8_fast_path() {
     );
 
     let idx = (20 * width + 10) * 3;
-    assert_matches!(info.format(), ImageFormat::JPEG);
+    assert_matches!(info.format(), ImageFormat::Jpeg);
     assert!((output[idx] as i32 - 10).abs() < 5, "R channel mismatch");
     assert!(
         (output[idx + 1] as i32 - 20).abs() < 5,

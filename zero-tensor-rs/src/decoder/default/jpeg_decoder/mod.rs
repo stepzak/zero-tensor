@@ -29,7 +29,7 @@ impl ImageDecoder for JpegDecoder {
             header.width,
             header.height,
             3,
-            ImageFormat::JPEG,
+            ImageFormat::Jpeg,
         ))
     }
 

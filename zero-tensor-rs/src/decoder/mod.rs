@@ -6,7 +6,7 @@ pub use pixel::Pixel;
 
 #[derive(Debug, Clone, Copy)]
 pub enum ImageFormat {
-    JPEG,
+    Jpeg,
 }
 
 #[derive(Debug, Clone, Copy)]
