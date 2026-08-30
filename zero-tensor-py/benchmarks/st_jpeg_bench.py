@@ -81,7 +81,6 @@ def benchmark_pytorch():
     end_time = time.time()
     duration = end_time - start_bench
     images_per_sec = target_batches * batch_size / duration
-    mb_per_sec = total_bytes / (1024 * 1024) / duration
     gb_per_sec = total_bytes / (1024 ** 3) / duration
     
     print("\n" + "=" * 70)
