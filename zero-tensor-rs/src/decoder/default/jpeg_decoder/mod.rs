@@ -53,7 +53,7 @@ impl ImageDecoder for JpegDecoder {
             return Err(DecodeError::InvalidStride(stride, width));
         }
         if max_height < height {
-            return Err(DecodeError::InvalidStride(max_height, width)); 
+            return Err(DecodeError::InvalidStride(max_height, width));
         }
 
         let total = stride * max_height * channels;
