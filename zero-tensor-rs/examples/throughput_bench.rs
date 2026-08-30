@@ -14,7 +14,7 @@ const BATCH_SIZE: usize = 48;
 const CHANNELS: ShapeType = 3;
 const HEIGHT: ShapeType = 512;
 const WIDTH: ShapeType = 512;
-const STEPS: u64 = 200;
+const STEPS: u64 = 600;
 const NSLOTS: u64 = 32;
 
 struct BenchDataset {

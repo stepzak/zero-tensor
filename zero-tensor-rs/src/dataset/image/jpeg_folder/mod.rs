@@ -70,6 +70,7 @@ impl JpegFolderDataset {
         for (path, _) in samples.iter() {
             let file = File::open(path)?;
             let mmap = unsafe { Mmap::map(&file) }?;
+            mmap.advise(memmap2::Advice::Sequential)?;
 
             let info = decoder
                 .info(&mmap)
