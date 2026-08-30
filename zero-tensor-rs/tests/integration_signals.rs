@@ -10,10 +10,10 @@ use tempfile::tempdir;
 #[test]
 fn test_cleanup_on_intercept() {
     let dir = tempdir().unwrap();
-    let sock_path = dir.path().join("integration_test.sock");
-    let shm_name = "zt_integration_test_shm";
+    let sock_path = dir.path().join("zt_blank.sock");
+    let shm_name = "zt_blank";
 
-    let bin_path = env!("CARGO_BIN_EXE_throughput_bench");
+    let bin_path = std::env::var("CARGO_BIN_EXE_blank").unwrap();
 
     let mut child = Command::new(bin_path)
         .stdout(Stdio::inherit())
@@ -28,6 +28,7 @@ fn test_cleanup_on_intercept() {
         libc::kill(pid as i32, libc::SIGINT);
     }
     let status = child.wait().expect("Failed to wait on child process");
+    println!("{status:?}");
     assert!(
         !status.success(),
         "Process should exit with non-zero code on SIGINT"

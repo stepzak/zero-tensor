@@ -147,11 +147,10 @@ fn test_unknown_key() {
     let mut writer = TensorWriter::new(&layouts, &mut buffer, &mut cache).unwrap();
 
     let result = writer.write("unknown", |_| -> Result<usize, std::io::Error> { Ok(0) });
-
-    assert!(matches!(
-        result,
-        Err(TensorWriteError::UnknownKey("unknown"))
-    ));
+    match result {
+        Err(TensorWriteError::UnknownKey(s)) => assert_eq!(s, "unknown".to_string()),
+        _ => assert!(false),
+    }
 }
 
 #[test]
@@ -167,8 +166,11 @@ fn test_key_exists() {
         .write("data", |_| -> Result<usize, std::io::Error> { Ok(100) })
         .unwrap();
     let result = writer.write("data", |_| -> Result<usize, std::io::Error> { Ok(100) });
-
-    assert!(matches!(result, Err(TensorWriteError::KeyExists("data"))));
+    let key = "data".to_string();
+    match result {
+        Err(TensorWriteError::KeyExists(s)) => assert_eq!(key, s),
+        _ => assert!(false),
+    }
 }
 
 #[test]
@@ -181,15 +183,18 @@ fn test_buffer_overflow() {
     let mut writer = TensorWriter::new(&layouts, &mut buffer, &mut cache).unwrap();
 
     let result = writer.write("data", |_| -> Result<usize, std::io::Error> { Ok(200) });
-
-    assert!(matches!(
-        result,
+    match result {
         Err(TensorWriteError::BufferOutOfBounds {
-            key: "data",
-            offset: 200,
-            total_size: 128
-        })
-    ));
+            key,
+            offset,
+            total_size,
+        }) => {
+            assert_eq!(key, "data".to_string());
+            assert_eq!(offset, 200);
+            assert_eq!(total_size, 128)
+        }
+        _ => assert!(false),
+    }
 }
 
 #[test]

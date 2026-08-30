@@ -1,15 +1,15 @@
 use thiserror::Error;
 
 #[derive(Error, Debug)]
-pub enum TensorWriteError<'a, E> {
+pub enum TensorWriteError<E> {
     #[error("Unknown key: {0}")]
-    UnknownKey(&'a str),
+    UnknownKey(String),
 
     #[error(
         "For {key}. Buffer out of bounds. Offset is {offset} while total length is {total_size}"
     )]
     BufferOutOfBounds {
-        key: &'a str,
+        key: String,
         offset: usize,
         total_size: usize,
     },
@@ -21,7 +21,7 @@ pub enum TensorWriteError<'a, E> {
     },
 
     #[error("Key already exists: {0}")]
-    KeyExists(&'a str),
+    KeyExists(String),
 }
 
 #[derive(Error, Debug)]

@@ -1,4 +1,6 @@
 pub mod core;
+pub mod dataset;
+mod decoder;
 pub mod pipeline;
 pub mod transform;
 

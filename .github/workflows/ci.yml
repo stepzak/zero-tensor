@@ -18,6 +18,16 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Install turbojpeg and dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libturbojpeg0-dev pkg-config
+
+      - name: Install NASM (Linux)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nasm
+
       - name: Set up Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
