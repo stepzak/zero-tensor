@@ -12,4 +12,10 @@ pub enum AugmentationError {
 
     #[error("Invalid parameter at {name}: {message}")]
     InvalidParameter { name: &'static str, message: String },
+
+    #[error("UnsupportedDtype for {name}: {dtype}")]
+    UnsupportedDtype { name: &'static str, dtype: String },
+
+    #[error("Custom: {0}")]
+    Custom(String),
 }

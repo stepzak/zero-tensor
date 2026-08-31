@@ -7,7 +7,7 @@ pub use item::*;
 pub use pipeline::*;
 use rand::Rng;
 
-#[derive(Clone, Debug, Copy)]
+#[derive(Clone, Debug, Copy, PartialEq)]
 pub struct ImageShape {
     pub channels: usize,
     pub height: usize,
