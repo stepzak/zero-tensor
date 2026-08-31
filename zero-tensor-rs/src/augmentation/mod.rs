@@ -12,7 +12,17 @@ pub trait Augmentation: Send + Sync + std::fmt::Debug {
 
     fn name(&self) -> &'static str;
 
-    fn apply(&self, input: &[Self::InputItem], output: &mut [Self::OutputItem], rng: Option<&mut dyn Rng>) -> Result<(), AugmentationError>;
+    fn fixed_output_size(&self) -> Option<(usize, usize)> {
+        None
+    }
+
+    fn apply(
+        &self,
+        input: &[Self::InputItem],
+        input_shape: (usize, usize, usize), // (C, H, W)
+        output: &mut [Self::OutputItem],
+        rng: Option<&mut dyn Rng>,
+    ) -> Result<(usize, usize, usize), AugmentationError>;
 
     fn changes_size(&self) -> bool {
         false

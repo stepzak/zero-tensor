@@ -1,9 +1,9 @@
+pub mod augmentation;
 pub mod core;
 pub mod dataset;
 mod decoder;
 pub mod pipeline;
 pub mod transform;
-pub mod augmentation;
 
 #[cfg(test)]
 mod tests {
