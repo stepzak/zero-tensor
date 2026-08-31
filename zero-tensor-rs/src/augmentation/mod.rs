@@ -1,3 +1,4 @@
+pub mod default;
 pub mod error;
 pub mod item;
 pub mod pipeline;
@@ -5,6 +6,13 @@ pub use error::*;
 pub use item::*;
 pub use pipeline::*;
 use rand::Rng;
+
+#[derive(Clone, Debug, Copy)]
+pub struct ImageShape {
+    pub channels: usize,
+    pub height: usize,
+    pub width: usize,
+}
 
 pub trait Augmentation: Send + Sync + std::fmt::Debug {
     type InputItem: AugmentationItem;
@@ -19,10 +27,10 @@ pub trait Augmentation: Send + Sync + std::fmt::Debug {
     fn apply(
         &self,
         input: &[Self::InputItem],
-        input_shape: (usize, usize, usize), // (C, H, W)
+        input_shape: ImageShape,
         output: &mut [Self::OutputItem],
         rng: Option<&mut dyn Rng>,
-    ) -> Result<(usize, usize, usize), AugmentationError>;
+    ) -> Result<ImageShape, AugmentationError>;
 
     fn changes_size(&self) -> bool {
         false

@@ -1,7 +1,7 @@
 use rand::Rng;
 use std::cell::RefCell;
 
-use crate::augmentation::{Augmentation, AugmentationError, AugmentationItem};
+use crate::augmentation::{Augmentation, AugmentationError, AugmentationItem, ImageShape};
 
 pub type AugVec<T> = Vec<Box<dyn Augmentation<InputItem = T, OutputItem = T>>>;
 
@@ -48,10 +48,10 @@ impl<T: AugmentationItem> AugmentationPipeline<T> {
     pub fn apply(
         &self,
         input: &[T],
-        input_shape: (usize, usize, usize),
+        input_shape: ImageShape,
         output: &mut [T],
         rng: Option<&mut dyn Rng>,
-    ) -> Result<(usize, usize, usize), AugmentationError> {
+    ) -> Result<ImageShape, AugmentationError> {
         let mut local_rng;
         let rng_ref: &mut dyn Rng = match rng {
             Some(r) => r,
@@ -104,7 +104,8 @@ impl<T: AugmentationItem> AugmentationPipeline<T> {
                             active = 0;
                         }
                     }
-                    current_len = current_shape.0 * current_shape.1 * current_shape.2;
+                    current_len =
+                        current_shape.channels * current_shape.width * current_shape.height;
                 }
             }
 
