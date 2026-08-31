@@ -14,6 +14,16 @@ pub struct ImageShape {
     pub width: usize,
 }
 
+impl ImageShape {
+    pub fn new(channels: usize, height: usize, width: usize) -> Self {
+        Self {
+            channels,
+            height,
+            width,
+        }
+    }
+}
+
 pub trait Augmentation: Send + Sync + std::fmt::Debug {
     type InputItem: AugmentationItem;
     type OutputItem: AugmentationItem;
@@ -36,3 +46,6 @@ pub trait Augmentation: Send + Sync + std::fmt::Debug {
         false
     }
 }
+
+#[cfg(test)]
+mod tests;

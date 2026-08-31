@@ -26,7 +26,7 @@ impl<T: AugmentationItem> AugmentationPipeline<T> {
         }
     }
 
-    pub fn add<A: Augmentation<InputItem = T, OutputItem = T> + 'static>(
+    pub fn then<A: Augmentation<InputItem = T, OutputItem = T> + 'static>(
         mut self,
         augmentation: A,
     ) -> Result<Self, AugmentationError> {
@@ -34,15 +34,26 @@ impl<T: AugmentationItem> AugmentationPipeline<T> {
             self.size_preserving_idx = Some(self.augmentations.len());
         }
 
-        if augmentation.changes_size() && self.size_preserving_idx.is_some() {
+        if augmentation.changes_size() && let Some(idx) = self.size_preserving_idx {
             return Err(AugmentationError::InvalidOrder {
                 new_step: augmentation.name(),
-                idx: self.size_preserving_idx.unwrap(),
+                idx,
             });
         }
 
         self.augmentations.push(Box::new(augmentation));
         Ok(self)
+    }
+
+    pub fn output_size(&self) -> Option<(usize, usize)> {
+        let split_idx = self.size_preserving_idx.unwrap_or(self.augmentations.len());
+        let size_changing = &self.augmentations[..split_idx];
+
+        if size_changing.is_empty() {
+            return None;
+        }
+
+        size_changing.last().and_then(|aug| aug.fixed_output_size())
     }
 
     pub fn apply(
