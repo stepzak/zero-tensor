@@ -241,20 +241,38 @@ mask = batch["mask"] # [B, 224, 224]
 For variable-size inputs, implement ``dynamic_layouts()``:
 
 ```rust
-fn static_layouts(&self) -> Option<&IndexMap<&'static str, TensorBatchLayout>> {
-    static LAYOUTS: OnceLock<IndexMap<&str, TensorBatchLayout>> = OnceLock::new();
-    Some(LAYOUTS.get_or_init(|| {
-        let mut m = IndexMap::new();
-        m.insert("image", TensorBatchLayout::new(vec![3, 224, 224].into(), ...));
-        m.insert("mask",  TensorBatchLayout::new(vec![224, 224].into(), ...));
-        m.insert("label", TensorBatchLayout::new(vec![1].into(), ...));
-        m
-    }))
-}
+    fn dynamic_layouts(
+        &self,
+        idxs: &[usize],
+    ) -> Result<IndexMap<&'a str, TensorBatchLayout>, Self::Error> {
+        if idxs.is_empty() {
+            return Err(JpegFolderDatasetError::EmptyBatch);
+        }
+
+        let mut im = IndexMap::new();
+        let (max_h, max_w) = /* */
+
+        *self.current_batch_max.write() = PaddingConfig {
+            stride: max_w,
+            max_height: max_h,
+        };
+
+        let mut img_shape = ShapeVec::new();
+        img_shape.extend_from_slice(&[3, max_h, max_w]);
+        let mut img_strides = StrideVec::new();
+        img_strides.extend_from_slice(&[max_h * max_w, max_w, 1]);
+        let img_layout = TensorBatchLayout::new(img_shape, img_strides, self.dt);
+        im.insert("image", img_layout);
+
+        let label_shape = ShapeVec::new();
+        let label_stride = StrideVec::new();
+        let lbl_layout = TensorBatchLayout::new(label_shape, label_stride, TensorDT::I64);
+        im.insert("label", lbl_layout);
+        Ok(im)
+    }
 
 fn write_item_into(&self, idx: usize, writer: &mut TensorWriter) -> Result<()> {
     writer.write("image", |buf| { /* ... */ Ok(size) })?;
-    writer.write("mask",  |buf| { /* ... */ Ok(size) })?;
     writer.write("label", |buf| { /* ... */ Ok(size) })?;
     Ok(())
 }
