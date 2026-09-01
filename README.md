@@ -54,6 +54,7 @@ All benchmarks run on **Intel Core i5-13420H** (8 cores, DDR4 SO-DIMM, 16 GB).
 | **ZeroTensor** | **10 GB/s** | **20,182** |
 | PyTorch DataLoader | 3 Gb/s | ~6600 |
 
+
 **Speedup: ~3.3x throughput, ~3.3x images/sec**
 
 ### 3. Raw Synthetic Throughput (Pre-computed F32 Tensors)
