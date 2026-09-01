@@ -1,3 +1,4 @@
+pub mod cache;
 pub mod error;
 pub use error::*;
 use indexmap::IndexMap;
@@ -7,10 +8,9 @@ use rand::rngs::ThreadRng;
 use std::{
     cell::RefCell,
     fs::File,
+    io::Read,
     path::{Path, PathBuf},
 };
-
-use memmap2::Mmap;
 
 use crate::{
     augmentation::{AugmentationItem, AugmentationPipeline, ImageShape},
@@ -32,11 +32,12 @@ thread_local! {
         b: Vec::with_capacity(3 * 224 * 224 * 4),
     });
     static AUG_RNG: RefCell<ThreadRng> = RefCell::new(rand::rng());
+    static MMAP_CACHE: RefCell<cache::MmapCache> = RefCell::new(cache::MmapCache::new(1024));
+
 }
 
 pub struct JpegFolderDataset<T: AugmentationItem = f32> {
     samples: Vec<(PathBuf, i64)>,
-    mmaps: Vec<Mmap>,
     infos: Vec<ImageInfo>,
     decoder: JpegDecoder,
     dt: TensorDT,
@@ -77,19 +78,20 @@ impl<T: AugmentationItem + Pixel> JpegFolderDataset<T> {
 
         samples.sort_by(|a, b| a.0.cmp(&b.0));
 
-        let mut mmaps = Vec::with_capacity(samples.len());
         let mut infos = Vec::with_capacity(samples.len());
         let decoder = JpegDecoder::new();
 
         for (path, _) in samples.iter() {
             let file = File::open(path)?;
-            let mmap = unsafe { Mmap::map(&file) }?;
-            mmap.advise(memmap2::Advice::Sequential)?;
+            const HEADER_SIZE: usize = 1024;
+            let mut header_buf = [0u8; HEADER_SIZE];
+            let mut reader = std::io::BufReader::new(&file);
+
+            reader.read_exact(&mut header_buf)?;
 
             let info = decoder
-                .info(&mmap)
+                .info(&header_buf)
                 .map_err(|e| JpegFolderDatasetNewError::DecodeError(path.into(), e))?;
-            mmaps.push(mmap);
             infos.push(info);
         }
 
@@ -99,7 +101,6 @@ impl<T: AugmentationItem + Pixel> JpegFolderDataset<T> {
 
         Ok(Self {
             samples,
-            mmaps,
             infos,
             decoder,
             dt,
@@ -121,27 +122,31 @@ impl<T: AugmentationItem + Pixel> JpegFolderDataset<T> {
         idx: usize,
         output: &mut [T],
     ) -> Result<usize, JpegFolderDatasetError<turbojpeg::Error>> {
-        let compressed = &self.mmaps[idx];
-        let padding = *self.current_batch_max.read();
-        let info = &self.infos[idx];
-        let c = info.channels();
+        let res = MMAP_CACHE.with_borrow_mut(|cache| {
+            let compressed = cache.get(idx, &self.samples[idx].0)?;
 
-        if let Some(aug) = &self.augmentation {
-            return self.inner_write_with_augmentation(
-                idx,
-                compressed,
-                output,
-                padding.max_height,
-                padding.stride,
-                aug,
-            );
-        }
+            let padding = *self.current_batch_max.read();
+            let info = &self.infos[idx];
+            let c = info.channels();
 
-        self.decoder
-            .decode::<T, PaddingConfig>(compressed, output, padding)
-            .map_err(|e| JpegFolderDatasetError::DecodeError(self.samples[idx].0.clone(), e))?;
+            if let Some(aug) = &self.augmentation {
+                return self.inner_write_with_augmentation(
+                    idx,
+                    compressed,
+                    output,
+                    padding.max_height,
+                    padding.stride,
+                    aug,
+                );
+            }
 
-        Ok(padding.stride * padding.max_height * c * size_of::<T>())
+            self.decoder
+                .decode::<T, PaddingConfig>(compressed, output, padding)
+                .map_err(|e| JpegFolderDatasetError::DecodeError(self.samples[idx].0.clone(), e))?;
+
+            Ok(padding.stride * padding.max_height * c * size_of::<T>())
+        })?;
+        Ok(res)
     }
 
     fn inner_write_with_augmentation(

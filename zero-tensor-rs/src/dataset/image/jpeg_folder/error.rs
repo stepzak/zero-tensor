@@ -45,6 +45,9 @@ pub enum JpegFolderDatasetError<D: std::error::Error = turbojpeg::Error> {
 
     #[error("Augmentation error: {0}")]
     Augmentation(AugmentationError),
+
+    #[error("Io error: {0}")]
+    IoError(#[from] std::io::Error),
 }
 
 impl ZTDatasetError for JpegFolderDatasetError {
