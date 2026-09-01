@@ -1,3 +1,5 @@
+use crate::augmentation::default::flip::RandomHorizontalFlip;
+
 use super::*;
 use tempfile::TempDir;
 use turbojpeg::Compressor;
@@ -47,7 +49,7 @@ fn test_jpeg_folder_dataset_e2e() {
             .map(|name| if name == "class_a" { 0 } else { 1 })
     };
 
-    let dataset = JpegFolderDataset::new(root, label_fn, TensorDT::F32).unwrap();
+    let dataset = JpegFolderDataset::new(root, label_fn).unwrap();
     assert_eq!(dataset.len(), 2);
 
     let layouts = dataset.dynamic_layouts(&[0, 1]).unwrap();
@@ -55,14 +57,14 @@ fn test_jpeg_folder_dataset_e2e() {
     assert_eq!(img_layout.shape(), &[3, 80, 100]);
 
     let max_elements = 3 * 80 * 100;
-    let mut mock_buf = vec![0u8; max_elements * std::mem::size_of::<f32>()];
+    let mut mock_buf = vec![0f32; max_elements];
 
-    let bytes_written = dataset.inner_write::<f32>(0, &mut mock_buf).unwrap();
+    let bytes_written = dataset.inner_write(0, &mut mock_buf).unwrap();
 
     let expected_bytes = 100 * 80 * 3 * 4;
     assert_eq!(bytes_written, expected_bytes);
 
-    let f32_view = bytemuck::cast_slice::<u8, f32>(&mock_buf);
+    let f32_view = mock_buf;
 
     assert!(
         f32_view[0] > 0.0,
@@ -94,4 +96,31 @@ fn test_jpeg_folder_dataset_e2e() {
         f32_view[bottom_padding_idx], 0.0,
         "Bottom padding should be zeroed"
     );
+}
+
+#[test]
+fn test_augmentation_with_large_image() {
+    let temp_dir = TempDir::new().unwrap();
+    let root = temp_dir.path();
+    let class_dir = root.join("class_a");
+    std::fs::create_dir(&class_dir).unwrap();
+
+    save_test_jpeg(&class_dir.join("big.jpg"), 1000, 1000);
+
+    let pipeline = AugmentationPipeline::<f32>::new()
+        .then(RandomHorizontalFlip::new(1.0).unwrap())
+        .unwrap();
+
+    let dataset = JpegFolderDataset::<f32>::new(root, |_| Some(0))
+        .unwrap()
+        .with_augmentation(pipeline);
+
+    let _ = dataset.dynamic_layouts(&[0]).unwrap();
+    let max_elements = 3 * 1000 * 1000;
+    let mut mock_buf = vec![0u8; max_elements * 4];
+
+    let bytes = dataset
+        .inner_write(0, bytemuck::cast_slice_mut(&mut mock_buf))
+        .unwrap();
+    assert!(bytes > 0);
 }

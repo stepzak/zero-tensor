@@ -2,7 +2,8 @@ use std::{cell::RefCell, marker::PhantomData};
 
 use crate::augmentation::{Augmentation, AugmentationError, AugmentationItem, ImageShape};
 use fast_image_resize::{
-    PixelType, Resizer,
+    FilterType::Bilinear,
+    PixelType, ResizeAlg, ResizeOptions, Resizer,
     images::{Image, ImageRef},
 };
 use rand::Rng;
@@ -71,6 +72,7 @@ impl<T: AugmentationItem + std::fmt::Debug> Augmentation for Resize<T> {
 
         let src_len = h * w;
         let dst_len = self.target_h * self.target_w;
+        let options = ResizeOptions::new().resize_alg(ResizeAlg::Convolution(Bilinear));
 
         RESIZER.with_borrow_mut(|resizer| {
             for channel in 0..c {
@@ -99,7 +101,7 @@ impl<T: AugmentationItem + std::fmt::Debug> Augmentation for Resize<T> {
                 })?;
 
                 resizer
-                    .resize(&src_image, &mut dst_image, None)
+                    .resize(&src_image, &mut dst_image, &options)
                     .map_err(|e| AugmentationError::Custom(format!("Resize failed: {}", e)))?;
             }
             Ok(())

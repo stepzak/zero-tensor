@@ -111,9 +111,13 @@ impl<T: AugmentationItem + std::fmt::Debug> Augmentation for Normalize<T> {
             let offset = channel * hw;
             let m = self.mean[channel] as f32;
             let s = self.std[channel] as f32;
+            let inv_s = 1.0 / s; 
 
-            for i in 0..hw {
-                output_f32[offset + i] = (input_f32[offset + i] - m) / s;
+            let src_chunk = &input_f32[offset..offset + hw];
+            let dst_chunk = &mut output_f32[offset..offset + hw];
+
+            for (out, &inp) in dst_chunk.iter_mut().zip(src_chunk.iter()) {
+                *out = (inp - m) * inv_s; 
             }
         }
 

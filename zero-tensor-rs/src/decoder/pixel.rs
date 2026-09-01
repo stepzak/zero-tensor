@@ -1,6 +1,6 @@
-use bytemuck::Pod;
+use bytemuck::{Pod, Zeroable};
 
-pub trait Pixel: Pod + Copy + Send + Sync + 'static {
+pub trait Pixel: Pod + Copy + Send + Sync + Zeroable + 'static {
     fn from_u8(value: u8) -> Self;
 }
 

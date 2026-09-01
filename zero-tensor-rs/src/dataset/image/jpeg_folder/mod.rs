@@ -1,10 +1,11 @@
 pub mod error;
-use bytemuck::{AnyBitPattern, NoUninit};
 pub use error::*;
 use indexmap::IndexMap;
 use parking_lot::RwLock;
+use rand::rngs::ThreadRng;
 
 use std::{
+    cell::RefCell,
     fs::File,
     path::{Path, PathBuf},
 };
@@ -12,31 +13,44 @@ use std::{
 use memmap2::Mmap;
 
 use crate::{
+    augmentation::{AugmentationItem, AugmentationPipeline, ImageShape},
     core::dataset::{
         ZeroTensorDataset,
         item::{ShapeVec, StrideVec, TensorBatchLayout, TensorDT},
     },
-    decoder::{DecodeError, ImageDecoder, ImageInfo, PaddingConfig, Pixel, default::JpegDecoder},
+    decoder::{ImageDecoder, ImageInfo, PaddingConfig, Pixel, default::JpegDecoder},
 };
 
-pub struct JpegFolderDataset {
+struct AugBuffers {
+    a: Vec<u8>,
+    b: Vec<u8>,
+}
+
+thread_local! {
+    static AUG_BUFS: RefCell<AugBuffers> = RefCell::new(AugBuffers {
+        a: Vec::with_capacity(3 * 224 * 224 * 4),
+        b: Vec::with_capacity(3 * 224 * 224 * 4),
+    });
+    static AUG_RNG: RefCell<ThreadRng> = RefCell::new(rand::rng());
+}
+
+pub struct JpegFolderDataset<T: AugmentationItem = f32> {
     samples: Vec<(PathBuf, i64)>,
     mmaps: Vec<Mmap>,
     infos: Vec<ImageInfo>,
     decoder: JpegDecoder,
     dt: TensorDT,
     current_batch_max: RwLock<PaddingConfig>,
+    augmentation: Option<AugmentationPipeline<T>>,
 }
 
-impl JpegFolderDataset {
-    pub fn new<F, D>(
+impl<T: AugmentationItem + Pixel> JpegFolderDataset<T> {
+    pub fn new<F>(
         root: &Path,
         label_fn: F,
-        dt: D,
     ) -> Result<Self, JpegFolderDatasetNewError<turbojpeg::Error>>
     where
         F: Fn(&Path) -> Option<i64>,
-        D: Into<Option<TensorDT>>,
     {
         if !root.is_dir() {
             return Err(JpegFolderDatasetNewError::NotDirectory(root.into()));
@@ -79,7 +93,9 @@ impl JpegFolderDataset {
             infos.push(info);
         }
 
-        let dt = dt.into().unwrap_or(TensorDT::F32);
+        let dt = TensorDT::from_type::<T>().ok_or_else(|| {
+            JpegFolderDatasetNewError::UnsupportedType(std::any::type_name::<T>().to_string())
+        })?;
 
         Ok(Self {
             samples,
@@ -91,30 +107,145 @@ impl JpegFolderDataset {
                 stride: 0,
                 max_height: 0,
             }),
+            augmentation: None,
         })
     }
 
-    fn inner_write<T: NoUninit + AnyBitPattern + Pixel>(
+    pub fn with_augmentation(mut self, augmentation: AugmentationPipeline<T>) -> Self {
+        self.augmentation = Some(augmentation);
+        self
+    }
+
+    fn inner_write(
         &self,
         idx: usize,
-        buf: &mut [u8],
-    ) -> Result<usize, DecodeError<turbojpeg::Error>> {
-        let elem_size = std::mem::size_of::<T>();
-        let aligned_len = (buf.len() / elem_size) * elem_size;
-        let aligned_buf = &mut buf[..aligned_len];
-
-        let output: &mut [T] = bytemuck::cast_slice_mut(aligned_buf);
+        output: &mut [T],
+    ) -> Result<usize, JpegFolderDatasetError<turbojpeg::Error>> {
         let compressed = &self.mmaps[idx];
-        let stride = *self.current_batch_max.read();
-        let info = self
-            .decoder
-            .decode::<T, PaddingConfig>(compressed, output, stride)?;
-        let actual_size = stride.stride * stride.max_height * info.channels() * elem_size;
-        Ok(actual_size)
+        let padding = *self.current_batch_max.read();
+        let info = &self.infos[idx];
+        let c = info.channels();
+
+        if let Some(aug) = &self.augmentation {
+            return self.inner_write_with_augmentation(
+                idx,
+                compressed,
+                output,
+                padding.max_height,
+                padding.stride,
+                aug,
+            );
+        }
+
+        self.decoder
+            .decode::<T, PaddingConfig>(compressed, output, padding)
+            .map_err(|e| {
+                JpegFolderDatasetError::DecodeError(self.samples[idx].0.clone(), e)
+            })?;
+
+        Ok(padding.stride * padding.max_height * c * size_of::<T>())
+    }
+
+    fn inner_write_with_augmentation(
+        &self,
+        idx: usize,
+        compressed: &[u8],
+        output: &mut [T],
+        max_h: usize,
+        max_w: usize,
+        aug: &AugmentationPipeline<T>,
+    ) -> Result<usize, JpegFolderDatasetError<turbojpeg::Error>> {
+        let info = &self.infos[idx];
+        let c = info.channels();
+        let h = info.height();
+        let w = info.width();
+        let elem_size = std::mem::size_of::<T>();
+
+        AUG_BUFS.with_borrow_mut(|bufs| {
+            let AugBuffers { a, b } = &mut *bufs;
+
+            let inter_max = aug
+                .max_intermediate_size()
+                .map(|(ih, iw)| ih * iw * c)
+                .unwrap_or(0);
+
+            let max_dense_size = (max_h * max_w * c).max(inter_max).max(h * w * c);
+            let max_bytes_needed = max_dense_size * elem_size;
+
+            if a.len() < max_bytes_needed {
+                a.resize(max_bytes_needed, 0);
+            }
+            if b.len() < max_bytes_needed {
+                b.resize(max_bytes_needed, 0);
+            }
+
+            let dense_size = c * h * w;
+            let bytes_needed = dense_size * elem_size;
+            let decoded: &mut [T] = bytemuck::cast_slice_mut(&mut a[..bytes_needed]);
+
+            let augmented: &mut [T] = bytemuck::cast_slice_mut(&mut b[..max_bytes_needed]);
+
+            self.decoder
+                .decode::<T, PaddingConfig>(compressed, decoded, PaddingConfig::new(w, h))
+                .map_err(|e| JpegFolderDatasetError::DecodeError(self.samples[idx].0.clone(), e))?;
+
+            let input_shape = ImageShape::new(c, h, w);
+
+            let output_shape = AUG_RNG
+                .with_borrow_mut(|rng| aug.apply(decoded, input_shape, augmented, Some(&mut *rng)))
+                .map_err(JpegFolderDatasetError::Augmentation)?;
+
+            Self::copy_with_padding(augmented, output_shape, output, max_h, max_w);
+
+            Ok(max_h * max_w * c * elem_size)
+        })
+    }
+
+    fn copy_with_padding(
+        augmented: &[T],
+        shape: ImageShape,
+        output: &mut [T],
+        max_h: usize,
+        max_w: usize,
+    ) {
+        let c = shape.channels;
+        let h = shape.height;
+        let w = shape.width;
+        let zero = T::zeroed();
+
+        output.fill(zero);
+
+        for channel in 0..c {
+            let src_offset = channel * h * w;
+            let dst_offset = channel * max_h * max_w;
+
+            for y in 0..h {
+                let src_row = src_offset + y * w;
+                let dst_row = dst_offset + y * max_w;
+                output[dst_row..dst_row + w].copy_from_slice(&augmented[src_row..src_row + w]);
+            }
+        }
+    }
+
+    fn compute_max_size(&self, idxs: &[usize]) -> (usize, usize) {
+        let mut max_h = 0;
+        let mut max_w = 0;
+
+        for &idx in idxs {
+            let info = &self.infos[idx];
+            if info.height() > max_h {
+                max_h = info.height();
+            }
+            if info.width() > max_w {
+                max_w = info.width();
+            }
+        }
+
+        (max_h, max_w)
     }
 }
 
-impl<'a> ZeroTensorDataset<'a> for JpegFolderDataset {
+impl<'a, T: AugmentationItem + Pixel> ZeroTensorDataset<'a> for JpegFolderDataset<T> {
     type Error = JpegFolderDatasetError;
 
     fn len(&self) -> usize {
@@ -130,18 +261,13 @@ impl<'a> ZeroTensorDataset<'a> for JpegFolderDataset {
         }
 
         let mut im = IndexMap::new();
-        let mut max_h = 0;
-        let mut max_w = 0;
-
-        for &idx in idxs {
-            let info = &self.infos[idx];
-            if info.height() > max_h {
-                max_h = info.height();
-            }
-            if info.width() > max_w {
-                max_w = info.width();
-            }
-        }
+        let (max_h, max_w) = if let Some(aug) = &self.augmentation {
+            aug.max_intermediate_size()
+                .or_else(|| aug.output_size())
+                .unwrap_or_else(|| self.compute_max_size(idxs))
+        } else {
+            self.compute_max_size(idxs)
+        };
 
         *self.current_batch_max.write() = PaddingConfig {
             stride: max_w,
@@ -169,17 +295,8 @@ impl<'a> ZeroTensorDataset<'a> for JpegFolderDataset {
     ) -> Result<(), Self::Error> {
         let (path, lbl) = &self.samples[idx];
         let i_res = writer.write("image", |buf| -> Result<usize, JpegFolderDatasetError> {
-            let res = match self.dt {
-                TensorDT::F16 => self.inner_write::<half::f16>(idx, buf),
-                TensorDT::BF16 => self.inner_write::<half::bf16>(idx, buf),
-                TensorDT::F32 => self.inner_write::<f32>(idx, buf),
-                TensorDT::F64 => self.inner_write::<f64>(idx, buf),
-                TensorDT::I8 => self.inner_write::<i8>(idx, buf),
-                TensorDT::I32 => self.inner_write::<i32>(idx, buf),
-                TensorDT::I64 => self.inner_write::<i64>(idx, buf),
-                TensorDT::U8 => self.inner_write::<u8>(idx, buf),
-            }
-            .map_err(|e| JpegFolderDatasetError::DecodeError(path.clone(), e))?;
+            let buf_cast: &mut [T] = bytemuck::cast_slice_mut(buf);
+            let res = self.inner_write(idx, buf_cast)?;
             Ok(res)
         });
         i_res.map_err(|e| JpegFolderDatasetError::WriteError(path.clone(), Box::new(e)))?;

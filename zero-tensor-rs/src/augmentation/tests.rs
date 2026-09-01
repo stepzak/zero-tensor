@@ -197,4 +197,29 @@ mod pipeline_tests {
 
         assert_eq!(output1, output2);
     }
+    #[test]
+    fn test_pipeline_with_larger_intermediate_size() {
+        let pipeline = AugmentationPipeline::<f32>::new()
+            .then(Resize::new(256, 256))
+            .unwrap()
+            .then(RandomCrop::new(224, 224))
+            .unwrap()
+            .then(Normalize::imagenet())
+            .unwrap();
+
+        assert_eq!(pipeline.max_intermediate_size(), Some((256, 256)));
+        assert_eq!(pipeline.output_size(), Some((224, 224)));
+    }
+
+    #[test]
+    fn test_large_input_small_output() {
+        let pipeline = AugmentationPipeline::<f32>::new()
+            .then(Resize::new(256, 256))
+            .unwrap()
+            .then(RandomCrop::new(224, 224))
+            .unwrap();
+
+        assert_eq!(pipeline.max_intermediate_size(), Some((256, 256)));
+        assert_eq!(pipeline.output_size(), Some((224, 224)));
+    }
 }

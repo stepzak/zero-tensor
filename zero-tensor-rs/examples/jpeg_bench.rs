@@ -2,9 +2,13 @@ use std::fs;
 use std::path::Path;
 use std::time::Instant;
 use turbojpeg::{Compressor, Image, PixelFormat};
+use zero_tensor_lib::augmentation::AugmentationPipeline;
+use zero_tensor_lib::augmentation::default::RandomCrop;
+use zero_tensor_lib::augmentation::default::flip::RandomHorizontalFlip;
+use zero_tensor_lib::augmentation::default::normalize::Normalize;
+use zero_tensor_lib::augmentation::default::resize::Resize;
 use zero_tensor_lib::core::dataset::ZeroTensorDataset;
 
-use zero_tensor_lib::core::dataset::item::TensorDT;
 use zero_tensor_lib::core::producer::ZeroTensorProducerBuilder;
 use zero_tensor_lib::dataset::image::JpegFolderDataset;
 
@@ -86,8 +90,20 @@ fn main() {
             })
     };
 
-    let dataset = JpegFolderDataset::new(&dataset_dir, label_fn, TensorDT::F32)
-        .expect("Failed to create dataset");
+    let pipeline = AugmentationPipeline::<f32>::new()
+        .then(Resize::new(256, 256))
+        .unwrap()
+        .then(RandomCrop::new(224, 224))
+        .unwrap()
+        .then(RandomHorizontalFlip::new(0.5).unwrap())
+        .unwrap()
+        .then(Normalize::imagenet())
+        .unwrap();
+
+    let dataset =
+        JpegFolderDataset::<f32>::new(&dataset_dir, label_fn).expect("Failed to create dataset");
+
+    let dataset = dataset.with_augmentation(pipeline);
 
     let builder = ZeroTensorProducerBuilder::from_dataset(
         &dataset,

@@ -34,7 +34,9 @@ impl<T: AugmentationItem> AugmentationPipeline<T> {
             self.size_preserving_idx = Some(self.augmentations.len());
         }
 
-        if augmentation.changes_size() && let Some(idx) = self.size_preserving_idx {
+        if augmentation.changes_size()
+            && let Some(idx) = self.size_preserving_idx
+        {
             return Err(AugmentationError::InvalidOrder {
                 new_step: augmentation.name(),
                 idx,
@@ -54,6 +56,16 @@ impl<T: AugmentationItem> AugmentationPipeline<T> {
         }
 
         size_changing.last().and_then(|aug| aug.fixed_output_size())
+    }
+
+    pub fn max_intermediate_size(&self) -> Option<(usize, usize)> {
+        let split_idx = self.size_preserving_idx.unwrap_or(self.augmentations.len());
+        let size_changing = &self.augmentations[..split_idx];
+
+        size_changing
+            .iter()
+            .filter_map(|aug| aug.fixed_output_size())
+            .max_by_key(|&(h, w)| h * w)
     }
 
     pub fn apply(

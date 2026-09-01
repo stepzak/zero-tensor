@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use thiserror::Error;
 
 use crate::{
+    augmentation::AugmentationError,
     core::{dataset::ZTDatasetError, writer::TensorWriteError},
     decoder::DecodeError,
 };
@@ -23,6 +24,9 @@ pub enum JpegFolderDatasetNewError<D: std::error::Error = turbojpeg::Error> {
 
     #[error("WalkDirError: {0}")]
     WalkDirError(#[from] walkdir::Error),
+
+    #[error("Unsupported dtype: {0}")]
+    UnsupportedType(String),
 }
 
 #[derive(Error, Debug)]
@@ -38,6 +42,9 @@ pub enum JpegFolderDatasetError<D: std::error::Error = turbojpeg::Error> {
 
     #[error("Buffer too small. Needeed : {needed}, got {got}")]
     BufferTooSmall { needed: usize, got: usize },
+
+    #[error("Augmentation error: {0}")]
+    Augmentation(AugmentationError),
 }
 
 impl ZTDatasetError for JpegFolderDatasetError {
