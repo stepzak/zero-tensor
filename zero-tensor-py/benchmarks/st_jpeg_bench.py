@@ -30,7 +30,7 @@ def benchmark_pytorch_with_augmentations():
         ),
     ])
 
-    dataset = datasets.ImageFolder(root=dataset_dir, transform=None)
+    dataset = datasets.ImageFolder(root=dataset_dir, transform=transform)
     init_time = time.time() - start_init
     print(f"[PyTorch] Dataset initialized in {init_time:.2f}s ({len(dataset)} images)")
 
