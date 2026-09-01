@@ -221,6 +221,8 @@ impl<'a> ZeroTensorDataset<'a> for MyCustomDataset {
             ints[0] = idx as i64;
             Ok(8)
         }).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+
+        // Write mask
         writer.write("mask",  |buf| { /* ... */ Ok(size) })?;
 
         Ok(())
