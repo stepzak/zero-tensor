@@ -47,7 +47,7 @@ You also need to install `libturbojpeg0-dev` and `pkg-config`
 | **ZeroTensor** | **30-34 GB/s** | Zero-copy, Rust producer |
 | PyTorch DataLoader | 6-7 GB/s | Multiprocessing + pickle serialization + copy |
 
-> *Note: For maximum stable throughput, pin **only** the Python consumer to half of CPU cores. Let the Rust producer use all available cores for parallel augmentation
+> *Note*: For maximum stable throughput, pin **only** the Python consumer to half of CPU cores. Let the Rust producer use all available cores for parallel augmentation
 
 ---
 
