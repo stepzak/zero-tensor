@@ -39,21 +39,20 @@ All benchmarks run on **Intel Core i5-13420H** (8 cores, DDR4 SO-DIMM, 16 GB).
 
 *Pipeline: Decode → Resize(256) → RandomCrop(224) → RandomHorizontalFlip(0.5) → Normalize(ImageNet)*
 
-| Loader | Throughput | Images/sec | Notes |
-|--------|-----------|------------|-------|
-| **ZeroTensor** | **2.54 GB/s** | **12,237** | Rust parallel decode + SIMD augmentations |
-| PyTorch DataLoader | 0.96 GB/s | 4,481 | 4 workers, `pin_memory`, `prefetch_factor=2`, `pad_collate` |
-
+| Loader | Throughput | Images/sec |
+|--------|-----------|------------|
+| **ZeroTensor** | **2.54 GB/s** | **12,237** |
+| PyTorch DataLoader | 0.96 GB/s | 4,481 |
 **Speedup: ~2.6x throughput, ~2.7x images/sec**
 
 ### 2. JPEG Decode Only (No Augmentations)
 
 *Pipeline: Decode → Pad to max size in batch*
 
-| Loader | Throughput | Images/sec | Notes |
-|--------|-----------|------------|-------|
-| **ZeroTensor** | **10 GB/s** | **20,182** | Rust parallel decode, zero-copy SHM |
-| PyTorch DataLoader | 3 Gb/s | ~6600 | Same config as above |
+| Loader | Throughput | Images/sec |
+|--------|-----------|------------|
+| **ZeroTensor** | **10 GB/s** | **20,182** |
+| PyTorch DataLoader | 3 Gb/s | ~6600 |
 
 **Speedup: ~3.3x throughput, ~3.3x images/sec**
 
@@ -61,10 +60,10 @@ All benchmarks run on **Intel Core i5-13420H** (8 cores, DDR4 SO-DIMM, 16 GB).
 
 *3×512×512 F32 tensors, batch_size=48, 600 steps — pure IPC benchmark, no I/O*
 
-| Loader | Throughput | Notes |
-|--------|-----------|-------|
-| **ZeroTensor** | **30-34 GB/s** | Zero-copy, Rust producer |
-| PyTorch DataLoader | 6-7 GB/s | Multiprocessing + pickle serialization + copy |
+| Loader | Throughput |
+|--------|-----------|
+| **ZeroTensor** | **30-34 GB/s** |
+| PyTorch DataLoader | 6-7 GB/s |
 
 **Speedup: ~5x raw throughput**
 
