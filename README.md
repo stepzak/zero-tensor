@@ -150,7 +150,7 @@ from zero_tensor_py import ZeroTensorConsumer
 
 socket_path = "/tmp/zt.sock"
 shm_name = "zt_shared_buffer"
-device = torch.device("cuda" if torch.cuda.is_available() else " is cpu")
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 with ZeroTensorConsumer(socket_path, shm_name, prefetch_factor=12) as consumer:
     for epoch in range(5):
