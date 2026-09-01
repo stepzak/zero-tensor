@@ -8,7 +8,7 @@ Break the PyTorch `DataLoader` bottleneck. ZeroTensor is a high-performance, loc
 
 ## Prerequisites
 
-Current version only supports `Unix` system(for `/dev/shm`).
+Current version only supports `POSIX` system(for `/dev/shm`).
 
 You also need to install `libturbojpeg0-dev` and `pkg-config`
 
@@ -43,6 +43,7 @@ All benchmarks run on **Intel Core i5-13420H** (8 cores, DDR4 SO-DIMM, 16 GB).
 |--------|-----------|------------|
 | **ZeroTensor** | **2.54 GB/s** | **12,237** |
 | PyTorch DataLoader | 0.96 GB/s | 4,481 |
+
 **Speedup: ~2.6x throughput, ~2.7x images/sec**
 
 ### 2. JPEG Decode Only (No Augmentations)
