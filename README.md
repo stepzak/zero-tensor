@@ -108,7 +108,7 @@ use std::path::Path;
 fn main() {
     let dataset_dir = Path::new("/path/to/imagenet");
     
-    // 1. Define your augmentation pipeline (executed in Rust, zero-allocation)
+    // 1. Define your augmentation pipeline (executed in Rust, may require preallocated buffers. Preallocated buffers do not affect hot loop speed)
     let pipeline = AugmentationPipeline::<f32>::new()
         .then(Resize::new(256, 256)).unwrap()
         .then(RandomCrop::new(224, 224)).unwrap()
