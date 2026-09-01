@@ -22,7 +22,7 @@ def benchmark_zero_tensor():
     batch_count = 0
     warmup_batches = 20
     target_batches = 150
-    
+    batch_size = 32
     with ZeroTensorConsumer(socket_path, shm_name, prefetch_factor=12) as consumer:
         for batch in consumer:
             if batch_count < warmup_batches:
@@ -34,6 +34,8 @@ def benchmark_zero_tensor():
                 total_bytes = 0
             
             image = batch["image"]
+            if total_bytes == 0:
+                batch_size = image.shape[0]
             label = batch["label"]
             
             total_bytes += image.nbytes + label.nbytes
@@ -51,7 +53,7 @@ def benchmark_zero_tensor():
     gb_total = total_bytes / (1024 ** 3)
     gb_per_sec = gb_total / duration if duration > 0 else 0.0
     batches_per_sec = target_batches / duration if duration > 0 else 0.0
-    images_per_sec = target_batches * 32 / duration if duration > 0 else 0.0
+    images_per_sec = target_batches * batch_size / duration if duration > 0 else 0.0
     
     print("\n" + "=" * 70)
     print("ZEROTENSOR JPEG BENCHMARK RESULTS")

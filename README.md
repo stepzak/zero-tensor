@@ -23,30 +23,57 @@ You also need to install `libturbojpeg0-dev` and `pkg-config`
 -  **RAII cleanup**: Automatic socket/SHM cleanup on drop, even on panic or SIGINT
 
 ## Performance
-Tested on `13th Gen Intel(R) Core(TM) i5-13420H` + `DDR4`
 
-### 1. Real-World Scenario (JPEG Decode + Augmentations)
-*Pipeline: Decode → Resize(256) → RandomCrop(224) → RandomFlip(0.5) → Normalize*
+All benchmarks run on **Intel Core i5-13420H** (8 cores, DDR4 SO-DIMM, 16 GB).
+
+### Configuration
+
+- **Dataset:** 2,000 synthetic JPEG images (100×100 to 400×400, 10 classes)
+- **Batch size:** 32
+- **Warmup:** 20 batches
+- **Measurement:** 150 batches
+- **Python consumer:** identical for both ZeroTensor and PyTorch (`prefetch_factor=12` for ZeroTensor, `prefetch_factor=2` for PyTorch)
+
+> **Note:** `images/sec` is calculated as `(target_batches × batch_size) / duration`
+### 1. JPEG Decode + Full Augmentation Pipeline
+
+*Pipeline: Decode → Resize(256) → RandomCrop(224) → RandomHorizontalFlip(0.5) → Normalize(ImageNet)*
 
 | Loader | Throughput | Images/sec | Notes |
 |--------|-----------|------------|-------|
-| **ZeroTensor** | **~2.6 GB/s** | **~2200** | Rust parallel decode + SIMD augmentations |
-| PyTorch DataLoader | ~0.8 GB/s | ~800 | 4 workers, `pin_memory`, `prefetch_factor=2` |
+| **ZeroTensor** | **2.54 GB/s** | **12,237** | Rust parallel decode + SIMD augmentations |
+| PyTorch DataLoader | 0.96 GB/s | 4,481 | 4 workers, `pin_memory`, `prefetch_factor=2`, `pad_collate` |
 
-### 2. JPEG Decode with no augmentation
+**Speedup: ~2.6x throughput, ~2.7x images/sec**
+
+### 2. JPEG Decode Only (No Augmentations)
+
+*Pipeline: Decode → Pad to max size in batch*
 
 | Loader | Throughput | Images/sec | Notes |
 |--------|-----------|------------|-------|
-| **ZeroTensor** | **~11 GB/s** | **~6600** | Rust parallel decode |
-| PyTorch DataLoader | ~2 GB/s | ~1200 | 4 workers, `pin_memory`, `prefetch_factor=2` |
+| **ZeroTensor** | **10 GB/s** | **20,182** | Rust parallel decode, zero-copy SHM |
+| PyTorch DataLoader | 3 Gb/s | ~6600 | Same config as above |
+
+**Speedup: ~4.5x throughput, ~3x images/sec**
 
 ### 3. Raw Synthetic Throughput (Pre-computed F32 Tensors)
-*3×512×512 F32 tensors, batch size 48*
+
+*3×512×512 F32 tensors, batch_size=48, 600 steps — pure IPC benchmark, no I/O*
 
 | Loader | Throughput | Notes |
 |--------|-----------|-------|
 | **ZeroTensor** | **30-34 GB/s** | Zero-copy, Rust producer |
 | PyTorch DataLoader | 6-7 GB/s | Multiprocessing + pickle serialization + copy |
+
+**Speedup: ~5x raw throughput**
+
+### How Images/sec is Calculated
+
+```python
+# zero-tensor-py/benchmarks/zt_jpeg_bench.py (same for both loaders)
+images_per_sec = target_batches * batch_size / duration
+```
 
 > *Note*: For maximum stable throughput, pin **only** the Python consumer to half of CPU cores. Let the Rust producer use all available cores for parallel augmentation
 
