@@ -23,7 +23,7 @@ You also need to install `libturbojpeg0-dev` and `pkg-config`
 -  **RAII cleanup**: Automatic socket/SHM cleanup on drop, even on panic or SIGINT
 
 ## Performance
-Tested on `13th Gen Intel(R) Core(TM) i5-13420H`
+Tested on `13th Gen Intel(R) Core(TM) i5-13420H` + `DDR4`
 
 ### 1. Real-World Scenario (JPEG Decode + Augmentations)
 *Pipeline: Decode → Resize(256) → RandomCrop(224) → RandomFlip(0.5) → Normalize*
