@@ -54,7 +54,11 @@ impl<'a, 'b, 'c> TensorWriter<'a, 'b, 'c> {
             .cache
             .get_offset_size(key)
             .ok_or(TensorWriteError::UnknownKey(key.into()))?;
-        let idx = self.cache.slot_buffers().get_key_pos(key).ok_or(TensorWriteError::UnknownKey(key.to_string()))?;
+        let idx = self
+            .cache
+            .slot_buffers()
+            .get_key_pos(key)
+            .ok_or(TensorWriteError::UnknownKey(key.to_string()))?;
         if self.cache.written()[idx] {
             return Err(TensorWriteError::KeyExists(key.into()));
         }
