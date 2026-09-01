@@ -1,7 +1,7 @@
-pub mod cache;
 pub mod error;
 pub use error::*;
 use indexmap::IndexMap;
+use memmap2::Mmap;
 use parking_lot::RwLock;
 use rand::rngs::ThreadRng;
 
@@ -32,7 +32,6 @@ thread_local! {
         b: Vec::with_capacity(3 * 224 * 224 * 4),
     });
     static AUG_RNG: RefCell<ThreadRng> = RefCell::new(rand::rng());
-    static MMAP_CACHE: RefCell<cache::MmapCache> = RefCell::new(cache::MmapCache::new(1024));
 
 }
 
@@ -122,8 +121,10 @@ impl<T: AugmentationItem + Pixel> JpegFolderDataset<T> {
         idx: usize,
         output: &mut [T],
     ) -> Result<usize, JpegFolderDatasetError<turbojpeg::Error>> {
-        let res = MMAP_CACHE.with_borrow_mut(|cache| {
-            let compressed = cache.get(idx, &self.samples[idx].0)?;
+       
+                let file = File::open(&self.samples[idx].0)?;
+    let compressed = unsafe { Mmap::map(&file)? };
+    compressed.advise(memmap2::Advice::Sequential)?;
 
             let padding = *self.current_batch_max.read();
             let info = &self.infos[idx];
@@ -132,7 +133,7 @@ impl<T: AugmentationItem + Pixel> JpegFolderDataset<T> {
             if let Some(aug) = &self.augmentation {
                 return self.inner_write_with_augmentation(
                     idx,
-                    compressed,
+                    &compressed,
                     output,
                     padding.max_height,
                     padding.stride,
@@ -141,12 +142,11 @@ impl<T: AugmentationItem + Pixel> JpegFolderDataset<T> {
             }
 
             self.decoder
-                .decode::<T, PaddingConfig>(compressed, output, padding)
+                .decode::<T, PaddingConfig>(&compressed, output, padding)
                 .map_err(|e| JpegFolderDatasetError::DecodeError(self.samples[idx].0.clone(), e))?;
 
             Ok(padding.stride * padding.max_height * c * size_of::<T>())
-        })?;
-        Ok(res)
+        
     }
 
     fn inner_write_with_augmentation(
