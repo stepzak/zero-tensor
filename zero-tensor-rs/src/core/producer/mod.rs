@@ -79,6 +79,7 @@ pub struct ZeroTensorProducer {
     shuffle: bool,
     seed: Option<u64>,
     max_steps: Option<usize>,
+    connected: bool,
 }
 
 impl ZeroTensorProducer {
@@ -226,6 +227,7 @@ impl ZeroTensorProducer {
         match self.next_command(&mut reader, &mut buf)? {
             ZTConsumerCmd::Start => {
                 self.send_handshake(stream, &keys)?;
+                self.connected = false;
             }
             ZTConsumerCmd::Stop => return Ok(()),
         }
@@ -301,6 +303,7 @@ impl ZeroTensorProducer {
                         return Ok(());
                     }
                     if !Self::is_peer_alive(stream) {
+                        self.connected = false;
                         return Err(
                             std::io::Error::from(std::io::ErrorKind::ConnectionAborted).into()
                         );
@@ -388,14 +391,21 @@ impl Drop for ZeroTensorProducer {
     fn drop(&mut self) {
         let cb = self.buffer.control_block();
         let head = cb.head.load(Ordering::Acquire);
-        let timeout = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        if self.connected {
+            let timeout = std::time::Instant::now() + std::time::Duration::from_secs(5);
 
-        while cb.tail.load(Ordering::Acquire) < head {
-            if std::time::Instant::now() > timeout {
-                eprintln!("[ZeroTensor] Warning: Consumer did not drain all data");
-                break;
+            while cb.tail.load(Ordering::Acquire) < head {
+                if std::time::Instant::now() > timeout {
+                    eprintln!("[ZeroTensor] Warning: Consumer did not drain all data");
+                    break;
+                }
+                if !self.connected {
+                    eprintln!("[ZeroTensor] Consumer disconnected abruptly, aborting drain");
+                    break;
+                }
+
+                std::thread::sleep(std::time::Duration::from_micros(100));
             }
-            std::thread::sleep(std::time::Duration::from_micros(100));
         }
         if self.sock_path.exists() {
             _ = fs::remove_file(&self.sock_path);

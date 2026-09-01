@@ -158,6 +158,7 @@ impl ZeroTensorProducerBuilder {
             shuffle: self.shuffle,
             seed: self.seed,
             max_steps: self.max_steps,
+            connected: false,
         })
     }
 }
