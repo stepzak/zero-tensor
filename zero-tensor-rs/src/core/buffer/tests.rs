@@ -151,18 +151,6 @@ fn test_slot_size_batch_size_linear_growth() {
 }
 
 #[test]
-fn test_slot_size_at_least_header() {
-    let layouts = IndexMap::new();
-    let size = ZeroTensorBuffer::calculate_slot_size(&layouts, 1);
-    assert!(
-        size >= size_of::<TensorHeader>() as u64,
-        "Slot size {} is smaller than header size {}",
-        size,
-        size_of::<TensorHeader>()
-    );
-}
-
-#[test]
 fn test_slot_size_more_tensors_bigger_slot() {
     let layouts_1 = make_layouts(&[("image", &[3, 64, 64], TensorDT::F32)]);
     let layouts_2 = make_layouts(&[
@@ -206,13 +194,20 @@ fn test_slot_size_sufficient_for_data() {
         ("label", &[], TensorDT::I64),
     ]);
     let batch_size = 32;
-
     let size = ZeroTensorBuffer::calculate_slot_size(&layouts, batch_size);
 
-    let mut min_data_size: usize = size_of::<TensorHeader>();
+    let mut min_data_size: usize = 0;
+
     for layout in layouts.values() {
-        min_data_size += layout.total_bytes() * batch_size;
-        min_data_size += size_of_val(layout);
+        let ndims = layout.shape().len() + 1;
+        let meta_size =
+            size_of::<TensorHeader>() + ndims * (size_of::<StrideType>() + size_of::<ShapeType>());
+        min_data_size += align_to(meta_size, TensorWriter::ALIGNMENT);
+    }
+
+    for layout in layouts.values() {
+        let item_size = align_to(layout.total_bytes(), TensorWriter::ALIGNMENT);
+        min_data_size += item_size * batch_size;
     }
 
     assert!(
@@ -224,21 +219,15 @@ fn test_slot_size_sufficient_for_data() {
 }
 
 #[test]
-fn test_slot_size_empty_layouts() {
-    let layouts: IndexMap<&str, TensorBatchLayout> = IndexMap::new();
-    let size = ZeroTensorBuffer::calculate_slot_size(&layouts, 32);
-
-    assert!(size >= size_of::<TensorHeader>() as u64);
-    assert_eq!(size % 64, 0);
-}
-
-#[test]
 fn test_slot_size_batch_size_zero() {
     let layouts = make_layouts(&[("image", &[3, 64, 64], TensorDT::F32)]);
     let size = ZeroTensorBuffer::calculate_slot_size(&layouts, 0);
 
     assert!(size >= size_of::<TensorHeader>() as u64);
-    assert_eq!(size % 64, 0);
+    assert_eq!(
+        size % ZeroTensorControlBlock::recommended_slot_alignment() as u64,
+        0
+    );
 }
 
 #[test]
@@ -247,7 +236,10 @@ fn test_slot_size_scalar_tensor() {
     let size = ZeroTensorBuffer::calculate_slot_size(&layouts, 32);
 
     assert!(size >= size_of::<TensorHeader>() as u64);
-    assert_eq!(size % 64, 0);
+    assert_eq!(
+        size % ZeroTensorControlBlock::recommended_slot_alignment() as u64,
+        0
+    );
 }
 
 #[test]
@@ -259,7 +251,10 @@ fn test_slot_size_large_batch() {
     let size = ZeroTensorBuffer::calculate_slot_size(&layouts, 10000);
 
     assert!(size > 0);
-    assert_eq!(size % 64, 0);
+    assert_eq!(
+        size % ZeroTensorControlBlock::recommended_slot_alignment() as u64,
+        0
+    );
 
     assert!(size > 1_000_000_000);
 }

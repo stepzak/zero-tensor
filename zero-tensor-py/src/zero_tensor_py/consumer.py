@@ -303,8 +303,8 @@ class ZeroTensorConsumer:
                 raise zt_exc.MalformedMessageError(f"Unknown dtype in header: {dt}")
             
             batch_size = shape[0]
-            item_shape = shape[1:] if len(shape) > 1 else shape
-            item_strides = strides[1:] if len(strides) > 1 else strides
+            item_shape = shape[1:] if len(shape) > 1 else []
+            item_strides = strides[1:] if len(strides) > 1 else []
             
             numel = 1
             for d in item_shape:

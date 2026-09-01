@@ -1,3 +1,5 @@
+use std::any::TypeId;
+
 use smallvec::SmallVec;
 
 use super::super::buffer::get_dt_size;
@@ -14,6 +16,31 @@ pub enum TensorDT {
     I32,
     I64,
     U8,
+}
+
+impl TensorDT {
+    pub fn from_type<T: 'static>() -> Option<Self> {
+        let tid = std::any::TypeId::of::<T>();
+        if tid == std::any::TypeId::of::<u8>() {
+            Some(TensorDT::U8)
+        } else if tid == std::any::TypeId::of::<f32>() {
+            Some(TensorDT::F32)
+        } else if tid == std::any::TypeId::of::<i64>() {
+            Some(TensorDT::I64)
+        } else if tid == TypeId::of::<half::bf16>() {
+            Some(TensorDT::F16)
+        } else if tid == TypeId::of::<half::bf16>() {
+            Some(TensorDT::BF16)
+        } else if tid == TypeId::of::<f64>() {
+            Some(TensorDT::F64)
+        } else if tid == TypeId::of::<i8>() {
+            Some(TensorDT::I8)
+        } else if tid == TypeId::of::<i32>() {
+            Some(TensorDT::I32)
+        } else {
+            None
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]

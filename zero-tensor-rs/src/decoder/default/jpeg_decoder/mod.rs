@@ -129,7 +129,6 @@ impl ImageDecoder for JpegDecoder {
                 }
             }
 
-            // Обнуляем нижний остаток для кастомного типа P
             if max_height > height {
                 let bottom_start = height * stride * channels;
                 let bottom_end = max_height * stride * channels;

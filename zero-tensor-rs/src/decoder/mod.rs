@@ -23,6 +23,12 @@ pub struct PaddingConfig {
     pub max_height: usize,
 }
 
+impl PaddingConfig {
+    pub fn new(stride: usize, max_height: usize) -> Self {
+        Self { stride, max_height }
+    }
+}
+
 impl ImageInfo {
     pub fn new(width: usize, height: usize, channels: usize, image_format: ImageFormat) -> Self {
         Self {

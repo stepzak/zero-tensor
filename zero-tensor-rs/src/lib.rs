@@ -1,3 +1,4 @@
+pub mod augmentation;
 pub mod core;
 pub mod dataset;
 mod decoder;

@@ -74,11 +74,17 @@ impl ZeroTensorBuffer {
         layouts: &IndexMap<&str, TensorBatchLayout>,
         batch_size: usize,
     ) -> u64 {
-        let mut size = size_of::<TensorHeader>();
-        for (_, v) in layouts {
-            let layout_size = align_to(size_of_val(v), TensorWriter::ALIGNMENT);
-            let data_size = align_to(v.total_bytes() * batch_size, TensorWriter::ALIGNMENT);
-            size += layout_size + data_size;
+        let mut size = 0;
+        for (_, layout) in layouts {
+            let ndims = layout.shape().len() + 1;
+            let raw_meta = size_of::<TensorHeader>()
+                + ndims * (size_of::<StrideType>() + size_of::<ShapeType>());
+            size += align_to(raw_meta, TensorWriter::ALIGNMENT);
+        }
+
+        for (_, layout) in layouts {
+            let item_data = align_to(layout.total_bytes(), TensorWriter::ALIGNMENT);
+            size += item_data * batch_size;
         }
 
         align_to(size, ZeroTensorControlBlock::recommended_slot_alignment()) as u64
