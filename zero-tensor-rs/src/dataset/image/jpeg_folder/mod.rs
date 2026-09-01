@@ -121,32 +121,30 @@ impl<T: AugmentationItem + Pixel> JpegFolderDataset<T> {
         idx: usize,
         output: &mut [T],
     ) -> Result<usize, JpegFolderDatasetError<turbojpeg::Error>> {
-       
-                let file = File::open(&self.samples[idx].0)?;
-    let compressed = unsafe { Mmap::map(&file)? };
-    compressed.advise(memmap2::Advice::Sequential)?;
+        let file = File::open(&self.samples[idx].0)?;
+        let compressed = unsafe { Mmap::map(&file)? };
+        compressed.advise(memmap2::Advice::Sequential)?;
 
-            let padding = *self.current_batch_max.read();
-            let info = &self.infos[idx];
-            let c = info.channels();
+        let padding = *self.current_batch_max.read();
+        let info = &self.infos[idx];
+        let c = info.channels();
 
-            if let Some(aug) = &self.augmentation {
-                return self.inner_write_with_augmentation(
-                    idx,
-                    &compressed,
-                    output,
-                    padding.max_height,
-                    padding.stride,
-                    aug,
-                );
-            }
+        if let Some(aug) = &self.augmentation {
+            return self.inner_write_with_augmentation(
+                idx,
+                &compressed,
+                output,
+                padding.max_height,
+                padding.stride,
+                aug,
+            );
+        }
 
-            self.decoder
-                .decode::<T, PaddingConfig>(&compressed, output, padding)
-                .map_err(|e| JpegFolderDatasetError::DecodeError(self.samples[idx].0.clone(), e))?;
+        self.decoder
+            .decode::<T, PaddingConfig>(&compressed, output, padding)
+            .map_err(|e| JpegFolderDatasetError::DecodeError(self.samples[idx].0.clone(), e))?;
 
-            Ok(padding.stride * padding.max_height * c * size_of::<T>())
-        
+        Ok(padding.stride * padding.max_height * c * size_of::<T>())
     }
 
     fn inner_write_with_augmentation(
