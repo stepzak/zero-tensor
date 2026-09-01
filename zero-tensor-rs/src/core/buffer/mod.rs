@@ -308,13 +308,14 @@ impl Drop for ZeroTensorBuffer {
                 libc::munmap(self.addr as *mut c_void, self.total_size);
             }
         }
+        unsafe {
+            libc::close(self.fd);
+        }
+
         if self.is_owner {
             unsafe {
                 libc::shm_unlink(self.shm_filename.as_ptr());
             }
-        }
-        unsafe {
-            libc::close(self.fd);
         }
     }
 }
