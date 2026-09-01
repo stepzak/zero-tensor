@@ -260,6 +260,7 @@ fn write_item_into(&self, idx: usize, writer: &mut TensorWriter) -> Result<()> {
 }
 ```
 
+
 Smaller items are automatically zero-padded to the max size in the batch.
 
 ---

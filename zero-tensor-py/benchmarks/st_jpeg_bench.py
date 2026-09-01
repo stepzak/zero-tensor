@@ -59,7 +59,6 @@ def benchmark_pytorch_with_augmentations():
             start_bench = time.time()
             total_bytes = 0
 
-        # Имитация потребления данных (как в Rust consumer)
         _ = images.sum().item()
         total_bytes += images.nbytes + labels.nbytes
         batch_count += 1
