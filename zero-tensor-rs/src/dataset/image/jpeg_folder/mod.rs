@@ -139,9 +139,7 @@ impl<T: AugmentationItem + Pixel> JpegFolderDataset<T> {
 
         self.decoder
             .decode::<T, PaddingConfig>(compressed, output, padding)
-            .map_err(|e| {
-                JpegFolderDatasetError::DecodeError(self.samples[idx].0.clone(), e)
-            })?;
+            .map_err(|e| JpegFolderDatasetError::DecodeError(self.samples[idx].0.clone(), e))?;
 
         Ok(padding.stride * padding.max_height * c * size_of::<T>())
     }
