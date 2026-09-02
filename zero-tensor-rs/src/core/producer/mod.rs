@@ -1,4 +1,5 @@
 pub mod builder;
+pub mod epoch_context;
 pub mod error;
 mod helpers;
 mod msg;
@@ -9,6 +10,7 @@ use parking_lot::Mutex;
 
 use crate::core::{
     dataset::{ZTDatasetError, item::StrideType},
+    producer::epoch_context::EpochContext,
     writer::{TensorWriter, TensorWriterCache},
 };
 
@@ -244,7 +246,10 @@ impl ZeroTensorProducer {
         let mut current_epoch = 0;
         let mut epoch_step = steps_per_epoch;
         let mut indices: Vec<usize> = (0..dataset.len()).collect();
-
+        let mut ctx = EpochContext {
+            epoch: current_epoch,
+            shuffle: self.shuffle,
+        };
         loop {
             if !self.is_running() {
                 self.stop();
@@ -268,8 +273,9 @@ impl ZeroTensorProducer {
             if epoch_step >= steps_per_epoch {
                 current_epoch += 1;
                 epoch_step = 0;
+                ctx.epoch = current_epoch;
                 dataset
-                    .next_epoch()
+                    .next_epoch(&ctx)
                     .map_err(|e| ZTProducerErr::DatasetError {
                         idx: e.index(),
                         source: e,

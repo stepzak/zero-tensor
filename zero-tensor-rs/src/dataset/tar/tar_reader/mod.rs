@@ -47,6 +47,7 @@ impl TarReader {
         self.eof = false;
     }
 
+    #[allow(dead_code)]
     pub fn is_eof(&self) -> bool {
         self.eof || self.offset >= self.mmap.len()
     }

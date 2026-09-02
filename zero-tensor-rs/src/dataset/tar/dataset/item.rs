@@ -8,7 +8,7 @@ use crate::{
 };
 
 pub trait TarRecordProcessor<'data>: Send + Sync {
-    type Error: std::fmt::Debug + Send + Sync + Error;
+    type Error: std::fmt::Debug + Send + Sync + Error + 'static;
 
     fn get_layout(
         &self,

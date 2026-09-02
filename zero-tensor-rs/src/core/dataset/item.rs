@@ -1,6 +1,7 @@
 use std::any::TypeId;
 
 use smallvec::SmallVec;
+use thiserror::Error;
 
 use super::super::buffer::get_dt_size;
 use ndarray::{ArrayViewMutD, IxDyn, ShapeBuilder, ShapeError};
@@ -16,6 +17,23 @@ pub enum TensorDT {
     I32,
     I64,
     U8,
+}
+
+impl std::fmt::Display for TensorDT {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let write_str = match self {
+            Self::BF16 => "bf16",
+            Self::F32 => "f32",
+            Self::F16 => "f16",
+            Self::F64 => "f64",
+            Self::U8 => "u8",
+            Self::I8 => "i8",
+            Self::I32 => "i32",
+            Self::I64 => "i64",
+        };
+
+        write!(f, "{}", write_str)
+    }
 }
 
 impl TensorDT {
@@ -98,6 +116,15 @@ pub struct TensorBatchLayout {
     strides: StrideVec,
 }
 
+#[derive(Error, Debug)]
+pub enum MergeError {
+    #[error("Ndims do not match: {0} vs {1}")]
+    NdimsNotMatch(usize, usize),
+
+    #[error("DT do not match: {0} vs {1}")]
+    DtNotMatch(TensorDT, TensorDT),
+}
+
 impl TensorBatchLayout {
     pub fn new(shape: ShapeVec, strides: StrideVec, dt: TensorDT) -> Self {
         TensorBatchLayout { shape, strides, dt }
@@ -121,6 +148,31 @@ impl TensorBatchLayout {
 
     pub fn total_bytes(&self) -> usize {
         self.total_elements() * get_dt_size(self.dt)
+    }
+
+    pub fn merge_with(&mut self, other: &TensorBatchLayout) -> Result<(), MergeError> {
+        if self.dt != other.dt {
+            return Err(MergeError::DtNotMatch(self.dt, other.dt));
+        }
+        if self.shape.len() != other.shape.len() {
+            return Err(MergeError::NdimsNotMatch(
+                self.shape.len(),
+                other.shape.len(),
+            ));
+        }
+        for (s, o) in self.shape.iter_mut().zip(other.shape.iter()) {
+            *s = (*s).max(*o);
+        }
+        self.recalculate_strides();
+        Ok(())
+    }
+
+    fn recalculate_strides(&mut self) {
+        let mut stride = 1;
+        for i in (0..self.shape.len()).rev() {
+            self.strides[i] = stride;
+            stride *= self.shape[i];
+        }
     }
 
     pub fn add_batch_dimension(&mut self, batch_size: usize) -> Result<(), LayoutError> {

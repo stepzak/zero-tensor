@@ -3,7 +3,7 @@ use std::{error::Error, fmt::Debug};
 use indexmap::IndexMap;
 use item::TensorBatchLayout;
 
-use crate::core::writer::TensorWriter;
+use crate::core::{producer::epoch_context::EpochContext, writer::TensorWriter};
 
 pub mod item;
 
@@ -30,7 +30,7 @@ pub trait ZeroTensorDataset<'data>: Send + Sync {
         self.len()
     }
 
-    fn next_epoch(&self) -> Result<(), Self::Error> {
+    fn next_epoch(&self, _ctx: &EpochContext) -> Result<(), Self::Error> {
         Ok(())
     }
 

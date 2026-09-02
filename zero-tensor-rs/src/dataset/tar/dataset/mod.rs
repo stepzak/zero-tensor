@@ -9,13 +9,13 @@ use std::{
 
 use indexmap::IndexMap;
 use parking_lot::{Mutex, RwLock};
+use rand::Rng;
 
 use crate::{
     core::dataset::item::TensorBatchLayout,
     dataset::tar::tar_reader::{MAX_PATH_LEN, TarHeader, TarReader, TarReaderError},
 };
 
-pub use dataset_trait::*;
 pub use error::*;
 pub use item::*;
 
@@ -28,7 +28,7 @@ pub struct TarBufferEntry<'data, P: TarRecordProcessor<'data>> {
     _marker: PhantomData<P>,
 }
 
-pub struct TarDataset<'data, P: TarRecordProcessor<'data>> {
+pub struct TarDataset<'data, P: TarRecordProcessor<'data>, R: Rng + Send> {
     shards: RwLock<Vec<PathBuf>>,
     current_shard_idx: AtomicUsize,
     tar_reader: Mutex<TarReader>,
@@ -38,14 +38,16 @@ pub struct TarDataset<'data, P: TarRecordProcessor<'data>> {
     buffer_cap: usize,
     total_samples: usize,
     processor: P,
+    rng: Mutex<R>,
 }
 
-impl<'data, P: TarRecordProcessor<'data>> TarDataset<'data, P> {
+impl<'data, P: TarRecordProcessor<'data>, R: Rng + Send> TarDataset<'data, P, R> {
     pub fn new<F>(
         shards: Vec<PathBuf>,
         buffer_cap: usize,
         shard_size_fn: Option<F>,
         processor: P,
+        rng: R,
     ) -> Result<Self, TarDatasetError<P::Error>>
     where
         F: Fn(&PathBuf) -> Result<usize, P::Error> + Send + Sync,
@@ -62,7 +64,7 @@ impl<'data, P: TarRecordProcessor<'data>> TarDataset<'data, P> {
                         source: e,
                     })
                 })
-                .try_fold(0, |acc, val| {
+                .try_fold(0, |acc, val| -> Result<usize, TarDatasetError<P::Error>> {
                     let v = val?;
                     Ok(acc + v)
                 })?
@@ -98,9 +100,8 @@ impl<'data, P: TarRecordProcessor<'data>> TarDataset<'data, P> {
             buffer_cap,
             total_samples,
             processor,
+            rng: Mutex::new(rng),
         };
-
-        dataset.prime_initial_buffer()?;
 
         Ok(dataset)
     }
