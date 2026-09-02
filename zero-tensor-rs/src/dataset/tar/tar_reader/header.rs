@@ -138,12 +138,12 @@ impl TarHeader {
         stored == unsigned_sum || stored == signed_sum
     }
 
-    fn as_bytes(&self) -> &[u8; 512] {
-        let ptr = self as *const Self as *const [u8; 512];
+    pub fn as_bytes(&self) -> &[u8; TAR_HEADER_SIZE] {
+        let ptr = self as *const Self as *const [u8; TAR_HEADER_SIZE];
         unsafe { &*ptr }
     }
 
-    fn compute_checksums(&self) -> (u64, u64) {
+    pub fn compute_checksums(&self) -> (u64, u64) {
         let header_bytes = self.as_bytes();
         let mut unsigned_sum: u64 = 0;
         let mut signed_sum: i64 = 0;
