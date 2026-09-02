@@ -22,7 +22,17 @@ impl ZTDatasetError for std::io::Error {
 pub trait ZeroTensorDataset<'data>: Send + Sync {
     type Error: ZTDatasetError;
 
+    /// Logical len of the dataset: producer will call `write_item_into` with `idx` from `0` to `len`
     fn len(&self) -> usize;
+
+    /// Total epoch len of the dataset: producer will start the next epoch(and call `next_epoch`) and reshuffle(if needed) after `total_epoch_len` items are read
+    fn total_epoch_len(&self) -> usize {
+        self.len()
+    }
+
+    fn next_epoch(&self) -> Result<(), Self::Error> {
+        Ok(())
+    }
 
     fn write_item_into<'layout, 'b, 'c>(
         &self,
