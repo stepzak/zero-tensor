@@ -8,7 +8,7 @@ pub use error::*;
 use parking_lot::Mutex;
 
 use crate::core::{
-    dataset::item::StrideType,
+    dataset::{ZTDatasetError, item::StrideType},
     writer::{TensorWriter, TensorWriterCache},
 };
 
@@ -240,7 +240,7 @@ impl ZeroTensorProducer {
             .set_read_timeout(Some(std::time::Duration::from_millis(timeout)))
             .map_err(ZTProducerErr::IoError)?;
 
-        let steps_per_epoch = dataset.len().div_ceil(batch_size);
+        let steps_per_epoch = dataset.total_epoch_len().div_ceil(batch_size);
         let mut current_epoch = 0;
         let mut epoch_step = steps_per_epoch;
         let mut indices: Vec<usize> = (0..dataset.len()).collect();
@@ -268,6 +268,12 @@ impl ZeroTensorProducer {
             if epoch_step >= steps_per_epoch {
                 current_epoch += 1;
                 epoch_step = 0;
+                dataset
+                    .next_epoch()
+                    .map_err(|e| ZTProducerErr::DatasetError {
+                        idx: e.index(),
+                        source: e,
+                    })?;
                 if self.shuffle {
                     self.reshuffle_indices(&mut indices, current_epoch);
                 }
