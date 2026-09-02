@@ -142,6 +142,9 @@ impl<'data, P: TarRecordProcessor<'data>, R: Rng + Send> TarDataset<'data, P, R>
 
             match reader.next_record(&mut name_buf) {
                 Ok(record) => {
+                    if !record.header.is_regular_file() {
+                        continue;
+                    }
                     let mut cell = self.shuffle_buffer[cell_idx].lock();
                     self.update_cell(&mut cell, record.name, record.data, record.header)
                         .map_err(|e| TarDatasetError::ItemError {
@@ -199,3 +202,6 @@ impl<'data, P: TarRecordProcessor<'data>, R: Rng + Send> TarDataset<'data, P, R>
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests;

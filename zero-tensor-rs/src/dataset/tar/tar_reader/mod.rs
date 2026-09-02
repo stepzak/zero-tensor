@@ -38,6 +38,7 @@ impl TarReader {
         let file = File::open(path)?;
         let mmap = unsafe { Mmap::map(&file)? };
         mmap.advise(memmap2::Advice::Sequential)?;
+        self.mmap = mmap;
         self.reset();
         Ok(())
     }
