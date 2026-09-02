@@ -10,6 +10,7 @@ pub const MAX_PATH_LEN: usize = 260;
 
 #[derive(Debug)]
 pub struct TarRecord<'mmap, 'buf> {
+    pub header: &'mmap TarHeader,
     pub name: &'buf str,
     pub data: &'mmap [u8],
 }
@@ -31,6 +32,14 @@ impl TarReader {
             offset: 0,
             eof: false,
         })
+    }
+
+    pub fn open_file<P: AsRef<Path>>(&mut self, path: P) -> Result<(), std::io::Error> {
+        let file = File::open(path)?;
+        let mmap = unsafe { Mmap::map(&file)? };
+        mmap.advise(memmap2::Advice::Sequential)?;
+        self.reset();
+        Ok(())
     }
 
     pub fn reset(&mut self) {
@@ -115,7 +124,7 @@ impl TarReader {
                     .ok_or(TarReaderError::HeaderError)?,
             };
 
-            return Ok(TarRecord { name, data });
+            return Ok(TarRecord { header, name, data });
         }
     }
 }

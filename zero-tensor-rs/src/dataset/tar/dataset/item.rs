@@ -7,7 +7,7 @@ use crate::{
     dataset::tar::tar_reader::TarHeader,
 };
 
-pub trait TarDatasetItem<'data>: Send + Sync {
+pub trait TarRecordProcessor<'data>: Send + Sync {
     type Error: std::fmt::Debug + Send + Sync + Error;
 
     fn get_layout(
