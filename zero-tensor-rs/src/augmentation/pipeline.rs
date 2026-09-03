@@ -12,6 +12,9 @@ thread_local! {
         RefCell::new(Vec::with_capacity(2 * SCRATCH_INIT_CAP * std::mem::size_of::<f32>()));
 }
 
+pub type HEIGHT = usize;
+pub type WIDTH = usize;
+
 #[derive(Debug, Default)]
 pub struct AugmentationPipeline<T: AugmentationItem> {
     augmentations: AugVec<T>,
@@ -47,7 +50,7 @@ impl<T: AugmentationItem> AugmentationPipeline<T> {
         Ok(self)
     }
 
-    pub fn output_size(&self) -> Option<(usize, usize)> {
+    pub fn output_size(&self) -> Option<(HEIGHT, WIDTH)> {
         let split_idx = self.size_preserving_idx.unwrap_or(self.augmentations.len());
         let size_changing = &self.augmentations[..split_idx];
 
@@ -58,7 +61,7 @@ impl<T: AugmentationItem> AugmentationPipeline<T> {
         size_changing.last().and_then(|aug| aug.fixed_output_size())
     }
 
-    pub fn max_intermediate_size(&self) -> Option<(usize, usize)> {
+    pub fn max_intermediate_size(&self) -> Option<(HEIGHT, WIDTH)> {
         let split_idx = self.size_preserving_idx.unwrap_or(self.augmentations.len());
         let size_changing = &self.augmentations[..split_idx];
 
