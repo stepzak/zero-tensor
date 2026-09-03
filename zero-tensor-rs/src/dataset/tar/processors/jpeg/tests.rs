@@ -19,7 +19,7 @@ fn test_tar_jpeg_pipeline_with_real_writer() {
 
     let mock_jpeg_bytes = {
             let mut compressor = turbojpeg::Compressor::new().unwrap();
-            let raw_pixels = vec![255u8; 16 * 16 * 3]; // Белый квадрат 16x16
+            let raw_pixels = vec![255u8; 16 * 16 * 3]; 
             let image = Image {
                 height: 16,
                 width: 16,
