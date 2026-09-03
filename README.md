@@ -40,7 +40,7 @@ All benchmarks run on **Intel Core i5-13420H** (8 cores, DDR4 SO-DIMM, 16 GB).
 *Pipeline: Decode → Resize(256) → RandomCrop(224) → RandomHorizontalFlip(0.5) → Normalize(ImageNet)*
 
 | Loader | Throughput |
-|--------|-----------|------------|
+|--------|-----------|
 | **ZeroTensor** | **2.54 GB/s** |
 | PyTorch DataLoader | 0.62 GB/s |
 
@@ -51,7 +51,7 @@ All benchmarks run on **Intel Core i5-13420H** (8 cores, DDR4 SO-DIMM, 16 GB).
 *Pipeline: Decode → Pad to max size in batch*
 
 | Loader | Throughput |
-|--------|-----------|------------|
+|--------|-----------|
 | **ZeroTensor** | **~6.7 GB/s** |
 | PyTorch DataLoader | 3 Gb/s |
 
