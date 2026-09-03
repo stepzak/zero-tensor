@@ -61,7 +61,7 @@ impl TarReader {
         'mmap: 'buf,
     {
         if self.eof {
-            return Err(TarReaderError::EOF);
+            return Err(TarReaderError::Eof);
         }
         let mut gnu_long_name: Option<&'mmap str> = None;
 
@@ -81,7 +81,7 @@ impl TarReader {
 
             if header.name.iter().all(|&x| x == 0) && header.typeflag == 0 {
                 self.eof = true;
-                return Err(TarReaderError::EOF);
+                return Err(TarReaderError::Eof);
             }
 
             let file_size = header.file_size().ok_or(TarReaderError::HeaderError)? as usize;

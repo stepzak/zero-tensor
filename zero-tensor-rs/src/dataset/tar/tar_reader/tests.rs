@@ -72,7 +72,7 @@ fn test_read_single_file() {
     assert_eq!(record.data, data);
 
     let result = reader.next_record(&mut name_buf);
-    assert!(matches!(result, Err(TarReaderError::EOF)));
+    assert!(matches!(result, Err(TarReaderError::Eof)));
 }
 
 #[test]
@@ -187,7 +187,7 @@ fn test_is_eof() {
     let record = reader.next_record(&mut name_buf).unwrap();
     assert_eq!(record.name, "test.txt");
     let rec = reader.next_record(&mut name_buf);
-    assert!(matches!(rec, Err(TarReaderError::EOF)));
+    assert!(matches!(rec, Err(TarReaderError::Eof)));
     assert!(reader.is_eof());
 }
 
@@ -223,5 +223,5 @@ fn test_empty_tar() {
     let mut name_buf = [0u8; MAX_PATH_LEN];
 
     let result = reader.next_record(&mut name_buf);
-    assert!(matches!(result, Err(TarReaderError::EOF)));
+    assert!(matches!(result, Err(TarReaderError::Eof)));
 }

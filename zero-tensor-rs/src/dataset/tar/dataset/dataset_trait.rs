@@ -115,7 +115,7 @@ impl<'data, P: TarRecordProcessor<'data>, R: Rng + Send> ZeroTensorDataset<'data
                         })?;
                     return Ok(());
                 }
-                Err(TarReaderError::EOF) => {
+                Err(TarReaderError::Eof) => {
                     drop(reader);
                     let shards = self.shards.read();
                     self.move_to_next_shard(&shards)?;

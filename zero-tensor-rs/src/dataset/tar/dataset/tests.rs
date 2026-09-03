@@ -323,7 +323,10 @@ fn test_next_epoch_resets_state() {
     )
     .unwrap();
 
-    let ctx = EpochContext { epoch: 0, shuffle: false };
+    let ctx = EpochContext {
+        epoch: 0,
+        shuffle: false,
+    };
     dataset.next_epoch(&ctx).unwrap();
 
     let cell0 = dataset.shuffle_buffer[0].lock();
@@ -334,7 +337,10 @@ fn test_next_epoch_resets_state() {
     assert!(!cell1.data.is_empty(), "Cell 1 should be filled");
     drop(cell1);
 
-    let ctx2 = EpochContext { epoch: 1, shuffle: false };
+    let ctx2 = EpochContext {
+        epoch: 1,
+        shuffle: false,
+    };
     dataset.next_epoch(&ctx2).unwrap();
 
     assert_eq!(dataset.current_shard_idx.load(Ordering::Relaxed), 0);

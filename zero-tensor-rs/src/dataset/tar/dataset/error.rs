@@ -46,7 +46,7 @@ impl<T: Error + Sync + Send + Debug> TarDatasetError<T> {
     }
 }
 
-impl<'data, E: Send + Sync + Debug + Error + 'static> ZTDatasetError for TarDatasetError<E> {
+impl<E: Send + Sync + Debug + Error + 'static> ZTDatasetError for TarDatasetError<E> {
     fn index(&self) -> Option<usize> {
         None
     }

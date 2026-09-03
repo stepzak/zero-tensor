@@ -43,7 +43,7 @@ impl TarHeader {
     /// # Safety
     /// offset must be a multiple of 512 and ptr must be a valid mmap
     pub unsafe fn from_mmap<'mmap>(ptr: *const u8, offset: usize) -> Option<&'mmap TarHeader> {
-        if offset % TAR_HEADER_SIZE != 0 {
+        if !offset.is_multiple_of(TAR_HEADER_SIZE) {
             return Self::cold_alignment_error();
         }
         unsafe { Some(&*(ptr.add(offset) as *const TarHeader)) }
@@ -115,9 +115,9 @@ impl TarHeader {
     }
 
     pub fn get_type(&self) -> TarType {
-        if &self.magic == GNU_MAGIC {
+        if self.magic == GNU_MAGIC {
             TarType::Gnu
-        } else if &self.magic == POSIX_MAGIC {
+        } else if self.magic == POSIX_MAGIC {
             TarType::Posix
         } else {
             TarType::Unknown
@@ -149,7 +149,7 @@ impl TarHeader {
         let mut signed_sum: i64 = 0;
 
         for (i, &byte) in header_bytes.iter().enumerate() {
-            if i >= CHKSUM_LEFT && i < CHKSUM_RIGHT {
+            if (CHKSUM_LEFT..CHKSUM_RIGHT).contains(&i) {
                 unsigned_sum += b' ' as u64;
                 signed_sum += b' ' as i64;
             } else {

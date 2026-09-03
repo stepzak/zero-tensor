@@ -153,7 +153,7 @@ impl<'data, P: TarRecordProcessor<'data>, R: Rng + Send> TarDataset<'data, P, R>
                         })?;
                     cell_idx += 1;
                 }
-                Err(TarReaderError::EOF) => {
+                Err(TarReaderError::Eof) => {
                     drop(reader);
                     self.move_to_next_shard(&shards)?;
                 }

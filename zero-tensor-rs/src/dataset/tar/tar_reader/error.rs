@@ -9,5 +9,5 @@ pub enum TarReaderError {
     Overflow { needed: usize, got: usize },
 
     #[error("EOF")]
-    EOF,
+    Eof,
 }
