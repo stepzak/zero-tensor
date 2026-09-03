@@ -39,24 +39,24 @@ All benchmarks run on **Intel Core i5-13420H** (8 cores, DDR4 SO-DIMM, 16 GB).
 
 *Pipeline: Decode → Resize(256) → RandomCrop(224) → RandomHorizontalFlip(0.5) → Normalize(ImageNet)*
 
-| Loader | Throughput | Images/sec |
+| Loader | Throughput |
 |--------|-----------|------------|
-| **ZeroTensor** | **2.54 GB/s** | **12,237** |
-| PyTorch DataLoader | 0.96 GB/s | 4,481 |
+| **ZeroTensor** | **2.54 GB/s** |
+| PyTorch DataLoader | 0.62 GB/s |
 
-**Speedup: ~2.6x throughput, ~2.7x images/sec**
+**Speedup: ~2.6x throughput**
 
 ### 2. JPEG Decode Only (No Augmentations)
 
 *Pipeline: Decode → Pad to max size in batch*
 
-| Loader | Throughput | Images/sec |
+| Loader | Throughput |
 |--------|-----------|------------|
-| **ZeroTensor** | **10 GB/s** | **20,182** |
-| PyTorch DataLoader | 3 Gb/s | ~6600 |
+| **ZeroTensor** | **~6.7 GB/s** |
+| PyTorch DataLoader | 3 Gb/s |
 
 
-**Speedup: ~3.3x throughput, ~3.3x images/sec**
+**Speedup: ~3.2x throughput, ~3.2x images/sec**
 
 ### 3. Raw Synthetic Throughput (Pre-computed F32 Tensors)
 
