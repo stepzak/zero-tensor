@@ -61,9 +61,14 @@ impl<T: AugmentationItem, F: Fn(&str) -> i64 + Send + Sync> TarJpegProcessor<T, 
         max_h: usize,
         max_w: usize,
     ) {
+        if augmented.len() == output.len() {
+            output.copy_from_slice(augmented);
+            return;
+        }
         let c = shape.channels;
         let h = shape.height;
         let w = shape.width;
+
         let zero = T::zeroed();
 
         output.fill(zero);

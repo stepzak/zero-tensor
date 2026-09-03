@@ -22,6 +22,8 @@ _CONTROL_NEXT_EPOCH_MSG = b"EPOCH_DONE\n"
 _SOCK_WAIT_POLL_TIMEOUT = 0.00001
 _PROTO_BEGIN_STR = "ZT"
 
+_EPOCH_DONE_SENTINEL = object()
+
 
 def _align_to(n: int, to: int) -> int:
     return (n + to - 1) & ~(to - 1)
@@ -424,7 +426,7 @@ class ZeroTensorConsumer:
                     if chunk == b"":
                         raise zt_exc.ZTConnectionError("Producer disconnected")
                     if _CONTROL_NEXT_EPOCH_MSG in chunk:
-                        return None
+                        return _EPOCH_DONE_SENTINEL
             except BlockingIOError:
                 pass
             continue
@@ -444,7 +446,7 @@ class ZeroTensorConsumer:
                     if chunk == b"":
                         raise zt_exc.ZTConnectionError("Producer disconnected")
                     if _CONTROL_NEXT_EPOCH_MSG in chunk:
-                        return None
+                        return _EPOCH_DONE_SENTINEL
             except BlockingIOError:
                 pass
 
@@ -551,6 +553,10 @@ class ZeroTensorConsumer:
                 if result is None:
                     self._prefetch_queue.put(None)
                     return
+                
+                if result is _EPOCH_DONE_SENTINEL:
+                    self._prefetch_queue.put(None)
+                    continue
                 batch, slot_idx = result
                 self._prefetch_queue.put((batch, slot_idx, read_tail))
                 read_tail += 1

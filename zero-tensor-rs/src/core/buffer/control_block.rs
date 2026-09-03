@@ -73,6 +73,7 @@ impl ZeroTensorControlBlock {
         let min_align = Self::min_slot_alignment();
         let rec = Self::recommended_slot_alignment();
         if slot_size == 0 {
+            println!("{}", slot_size);
             return Err(ZTControlBlockError::InvalidSlotSize);
         }
         if !slot_size.is_multiple_of(min_align) {

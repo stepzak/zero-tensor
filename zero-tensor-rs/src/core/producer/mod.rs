@@ -208,6 +208,17 @@ impl ZeroTensorProducer {
             return Ok(());
         }
 
+        let ctx = EpochContext {
+            epoch: 0,
+            shuffle: self.shuffle,
+        };
+
+        dataset
+            .next_epoch(&ctx)
+            .map_err(|e| ZTProducerErr::DatasetError {
+                idx: e.index(),
+                source: e,
+            })?;
         let mut reader = BufReader::new(stream.try_clone().map_err(ZTProducerErr::IoError)?);
         let mut buf = String::with_capacity(CONSUMER_RESP_BUFFER);
         let layout = if let Some(s) = dataset.static_layouts() {
@@ -274,16 +285,16 @@ impl ZeroTensorProducer {
                 current_epoch += 1;
                 epoch_step = 0;
                 ctx.epoch = current_epoch;
-                dataset
-                    .next_epoch(&ctx)
-                    .map_err(|e| ZTProducerErr::DatasetError {
-                        idx: e.index(),
-                        source: e,
-                    })?;
                 if self.shuffle {
                     self.reshuffle_indices(&mut indices, current_epoch);
                 }
                 if current_epoch != 1 {
+                    dataset
+                        .next_epoch(&ctx)
+                        .map_err(|e| ZTProducerErr::DatasetError {
+                            idx: e.index(),
+                            source: e,
+                        })?;
                     Self::send_cmd(stream, ZTProducerCmd::EpochEnd)?;
                 }
             }

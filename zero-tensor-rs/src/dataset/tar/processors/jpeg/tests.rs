@@ -1,10 +1,10 @@
 use rand::SeedableRng;
 use rand::rngs::StdRng;
-use turbojpeg::Image;
-use turbojpeg::PixelFormat::RGB;
 use std::fs::File;
 use std::path::PathBuf;
 use tempfile::tempdir;
+use turbojpeg::Image;
+use turbojpeg::PixelFormat::RGB;
 
 use crate::core::dataset::ZeroTensorDataset;
 use crate::core::dataset::item::TensorDT;
@@ -16,23 +16,18 @@ use crate::dataset::tar::tar_reader::TarHeader;
 
 #[test]
 fn test_tar_jpeg_pipeline_with_real_writer() {
-
     let mock_jpeg_bytes = {
-            let mut compressor = turbojpeg::Compressor::new().unwrap();
-            let raw_pixels = vec![255u8; 16 * 16 * 3]; 
-            let image = Image {
-                height: 16,
-                width: 16,
-                pitch: 16 * 3,
-                format: RGB,
-                pixels: raw_pixels.as_slice()
-            };
-            compressor
-                .compress_to_vec(
-                    image
-                )
-                .unwrap()
+        let mut compressor = turbojpeg::Compressor::new().unwrap();
+        let raw_pixels = vec![255u8; 16 * 16 * 3];
+        let image = Image {
+            height: 16,
+            width: 16,
+            pitch: 16 * 3,
+            format: RGB,
+            pixels: raw_pixels.as_slice(),
         };
+        compressor.compress_to_vec(image).unwrap()
+    };
     let tmp_dir = tempdir().unwrap();
     let shard_path = tmp_dir.path().join("shard_000.tar");
     let file = File::create(&shard_path).unwrap();
@@ -43,14 +38,18 @@ fn test_tar_jpeg_pipeline_with_real_writer() {
     header1.set_path(img_name1).unwrap();
     header1.set_size(mock_jpeg_bytes.len() as u64);
     header1.set_cksum();
-    builder.append(&header1, mock_jpeg_bytes.as_slice()).unwrap();
+    builder
+        .append(&header1, mock_jpeg_bytes.as_slice())
+        .unwrap();
 
     let mut header2 = tar::Header::new_gnu();
     let img_name2 = "class_42/image_002.jpg";
     header2.set_path(img_name2).unwrap();
     header2.set_size(mock_jpeg_bytes.len() as u64);
     header2.set_cksum();
-    builder.append(&header2, mock_jpeg_bytes.as_slice()).unwrap();
+    builder
+        .append(&header2, mock_jpeg_bytes.as_slice())
+        .unwrap();
 
     builder.finish().unwrap();
 
