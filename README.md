@@ -39,8 +39,8 @@ All benchmarks run on **Intel Core i5-13420H** (8 cores, DDR4 SO-DIMM, 16 GB).
 
 *Pipeline: Decode → Resize(256) → RandomCrop(224) → RandomHorizontalFlip(0.5) → Normalize(ImageNet)*
 
-| Loader | Throughput |
-|--------|-----------|
+| Loader | Throughput | 
+|--------|-----------|------------|
 | **ZeroTensor** | **2.54 GB/s** |
 | PyTorch DataLoader | 0.62 GB/s |
 
@@ -53,10 +53,10 @@ All benchmarks run on **Intel Core i5-13420H** (8 cores, DDR4 SO-DIMM, 16 GB).
 | Loader | Throughput |
 |--------|-----------|
 | **ZeroTensor** | **~6.7 GB/s** |
-| PyTorch DataLoader | 3 Gb/s |
+| PyTorch DataLoader | ~3 Gb/s |
 
 
-**Speedup: ~3.2x throughput, ~3.2x images/sec**
+**Speedup: ~2.3x throughput**
 
 ### 3. Raw Synthetic Throughput (Pre-computed F32 Tensors)
 
@@ -65,7 +65,7 @@ All benchmarks run on **Intel Core i5-13420H** (8 cores, DDR4 SO-DIMM, 16 GB).
 | Loader | Throughput |
 |--------|-----------|
 | **ZeroTensor** | **30-34 GB/s** |
-| PyTorch DataLoader | 6-7 GB/s |
+| PyTorch DataLoader | ~6-7 GB/s |
 
 **Speedup: ~5x raw throughput**
 
@@ -241,14 +241,14 @@ impl<'a> ZeroTensorDataset<'a> for MyCustomDataset {
         writer.write("image", |buf| {
             let floats: &mut [f32] = bytemuck::cast_slice_mut(buf);
             // ... fill floats ...
-            Ok(floats.len() * 4)
+            Ok(floats.len() * size_of::<f32>())
         }).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
         
         // Write label
         writer.write("label", |buf| {
             let ints: &mut [i64] = bytemuck::cast_slice_mut(buf);
             ints[0] = idx as i64;
-            Ok(8)
+            Ok(size_of::<i64>())
         }).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
 
         // Write mask
