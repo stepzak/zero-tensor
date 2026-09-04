@@ -3,7 +3,7 @@ import time
 from zero_tensor_py.consumer import ZeroTensorConsumer
 
 
-def benchmark_zero_tensor():
+def benchmark_zero_tensor_tar():
     print("[Python] Starting ZeroTensor TAR Benchmark...")
 
     socket_path = "/tmp/zt_tar_bench.sock"
@@ -11,7 +11,7 @@ def benchmark_zero_tensor():
 
     if not os.path.exists(socket_path):
         print("[Python] ERROR: Rust producer is not running!")
-        print("[Python] Please run the Rust producer first:")
+        print("[Python] Please run:")
         print("  cargo run --release --example tar_jpeg_bench")
         return
 
@@ -25,7 +25,7 @@ def benchmark_zero_tensor():
     batch_size = 32
 
     with ZeroTensorConsumer(socket_path, shm_name, prefetch_factor=12) as consumer:
-        while batch_count < warmup_batches + target_batches:
+        while batch_count - warmup_batches < target_batches:
             for batch in consumer:
                 if batch_count < warmup_batches:
                     batch_count += 1
@@ -34,6 +34,7 @@ def benchmark_zero_tensor():
                 if start_time is None:
                     start_time = time.perf_counter()
                     total_bytes = 0
+
                 image = batch["image"]
                 label = batch["label"]
 
@@ -60,7 +61,7 @@ def benchmark_zero_tensor():
     print("\n" + "=" * 70)
     print("ZEROTENSOR TAR BENCHMARK RESULTS")
     print("=" * 70)
-    print(f"Batches processed:    {batch_count - warmup_batches}")
+    print(f"Batches processed:    {target_batches}")
     print(f"Total time:           {duration:.4f}s")
     print(f"Throughput:           {gb_per_sec:.2f} GB/s")
     print(f"Batches/sec:          {batches_per_sec:.1f}")
@@ -70,4 +71,4 @@ def benchmark_zero_tensor():
 
 
 if __name__ == "__main__":
-    benchmark_zero_tensor()
+    benchmark_zero_tensor_tar()

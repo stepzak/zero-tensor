@@ -2,7 +2,6 @@ import struct
 from zero_tensor_py.protocol import DT_F32, DT_I32
 
 def _make_batch(shape: list[int], values: list[float], dt: int = DT_F32) -> dict:
-    """Создаёт батч (словарь с ключом 'data' для совместимости с новыми тестами)."""
     strides = [1] * len(shape)
     for i in range(len(shape) - 2, -1, -1):
         strides[i] = strides[i + 1] * shape[i + 1]

@@ -1,15 +1,16 @@
-import os
 import time
+from pathlib import Path
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
 
 
 def benchmark_pytorch_with_augmentations():
-    dataset_dir = os.path.expanduser("~/.cache/zero_tensor_bench")
-    if not os.path.exists(dataset_dir):
-        print("[PyTorch] ERROR: Dataset not found!")
-        print("[PyTorch] Run Rust producer first to generate dataset:")
-        print("  cargo run --release --example jpeg_bench")
+    dataset_dir = Path.home() / ".cache" / "zero_tensor_bench"
+
+    if not dataset_dir.exists() or not any(dataset_dir.glob("class_*")):
+        print("[PyTorch] ERROR: ImageFolder dataset not found!")
+        print("[PyTorch] Please generate data first:")
+        print("[PyTorch]   cd zero-tensor-py && uv run python benchmarks/generate_dataset.py")
         return
 
     batch_size = 32
@@ -26,16 +27,23 @@ def benchmark_pytorch_with_augmentations():
         transforms.ToTensor(),
         transforms.Normalize(
             mean=[0.485, 0.456, 0.406],
-            std=[0.229, 0.224, 0.225]
+            std=[0.229, 0.224, 0.225],
         ),
     ])
 
-    dataset = datasets.ImageFolder(root=dataset_dir, transform=transform)
+    dataset = datasets.ImageFolder(root=str(dataset_dir), transform=transform)
     init_time = time.time() - start_init
     print(f"[PyTorch] Dataset initialized in {init_time:.2f}s ({len(dataset)} images)")
 
+    max_batches_from_data = len(dataset) // batch_size
+    actual_target_batches = min(target_batches, max_batches_from_data)
+
+    if actual_target_batches < target_batches:
+        print(f"[PyTorch] WARNING: Dataset only has {max_batches_from_data} full batches.")
+        print(f"[PyTorch]          Reducing target from {target_batches} to {actual_target_batches}")
+        target_batches = actual_target_batches
+
     print(f"\n[PyTorch] Starting benchmark ({target_batches} batches of size {batch_size})...")
-    
     dataloader = DataLoader(
         dataset,
         batch_size=batch_size,
@@ -49,25 +57,25 @@ def benchmark_pytorch_with_augmentations():
     start_bench = None
     total_bytes = 0
     batch_count = 0
+    while batch_count - warmup_batches < target_batches:
+        for images, labels in dataloader:
+            if batch_count < warmup_batches:
+                batch_count += 1
+                continue
+            if start_bench is None:
+                start_bench = time.time()
+                total_bytes = 0
 
-    for images, labels in dataloader:
-        if batch_count < warmup_batches:
+            _ = images.sum().item()
+            total_bytes += images.nbytes + labels.nbytes
             batch_count += 1
-            continue
 
-        if start_bench is None:
-            start_bench = time.time()
-            total_bytes = 0
-
-        _ = images.sum().item()
-        total_bytes += images.nbytes + labels.nbytes
-        batch_count += 1
-
-        if batch_count >= warmup_batches + target_batches:
-            break
+            if batch_count >= warmup_batches + target_batches:
+                break
 
     end_time = time.time()
     duration = end_time - start_bench
+
     images_per_sec = target_batches * batch_size / duration
     gb_per_sec = total_bytes / (1024 ** 3) / duration
 
