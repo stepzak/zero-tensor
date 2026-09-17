@@ -212,6 +212,10 @@ impl<T: AugmentationItem + Pixel> JpegFolderDataset<T> {
         let c = shape.channels;
         let h = shape.height;
         let w = shape.width;
+        if shape.height == max_h && shape.width == max_w {
+            output[..augmented.len()].copy_from_slice(augmented);
+            return;
+        }
         let zero = T::zeroed();
 
         output.fill(zero);

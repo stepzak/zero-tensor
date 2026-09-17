@@ -127,44 +127,44 @@ def main():
         "--format",
         choices=["imagefolder", "tar", "both"],
         default="imagefolder",
-        help="Формат выходных данных (default: imagefolder)",
+        
     )
     parser.add_argument(
         "-o",
         "--output-dir",
         type=Path,
         default=Path.home() / ".cache" / "zero_tensor_bench",
-        help="Директория для выходных данных",
+        
     )
     parser.add_argument(
         "--num-images",
         type=int,
         default=5000,  
-        help="Общее количество изображений (default: 5000)",
+        
     )
     parser.add_argument(
         "--num-classes",
         type=int,
         default=10,
-        help="Количество классов (default: 10)",
+        
     )
     parser.add_argument(
         "--num-shards",
         type=int,
         default=4,
-        help="Количество TAR-шардов (default: 4)",
+        
     )
     parser.add_argument(
         "--seed",
         type=int,
         default=42,
-        help="Seed для воспроизводимости (default: 42)",
+        
     )
     parser.add_argument(
         "--quality",
         type=int,
         default=85,
-        help="JPEG качество 1-100 (default: 85)",
+        
     )
 
     args = parser.parse_args()

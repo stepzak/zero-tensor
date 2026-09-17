@@ -120,7 +120,7 @@ fn process_chunk<'a, 'layout, 'chunk, D: ZeroTensorDataset<'a>>(
     Ok(())
 }
 
-pub fn copy_batch_to_shm<'a, 'layout, 'c, D: ZeroTensorDataset<'a>>(
+pub(super) fn copy_batch_to_shm<'a, 'layout, 'c, D: ZeroTensorDataset<'a>>(
     buffer: &mut ZeroTensorBuffer,
     running: &Arc<AtomicBool>,
     dataset: &D,

@@ -3,3 +3,7 @@ resolver="2"
 members=[
     "zero-tensor-rs"
 ]
+
+[profile.release]
+debug = true
+line-tables-only = true
