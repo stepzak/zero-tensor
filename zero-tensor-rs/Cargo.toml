@@ -4,6 +4,7 @@ version = "0.6.0"
 edition = "2024"
 
 [dependencies]
+aligned-vec = "0.6.4"
 bytemuck = { version = "1.25.2", features = ["derive", "extern_crate_alloc"] }
 crossbeam-utils = "0.8.22"
 ctrlc = "3.5.2"

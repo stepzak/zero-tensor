@@ -1,3 +1,4 @@
+use aligned_vec::AVec;
 use rand::Rng;
 use std::cell::RefCell;
 
@@ -8,8 +9,8 @@ pub type AugVec<T> = Vec<Box<dyn Augmentation<InputItem = T, OutputItem = T>>>;
 const SCRATCH_INIT_CAP: usize = 3 * 224 * 224;
 
 thread_local! {
-    static DOUBLE_SCRATCH: RefCell<Vec<u8>> =
-        RefCell::new(Vec::with_capacity(2 * SCRATCH_INIT_CAP * std::mem::size_of::<f32>()));
+    static DOUBLE_SCRATCH: RefCell<AVec<u8>> =
+        RefCell::new(AVec::with_capacity(64, 2 * SCRATCH_INIT_CAP * std::mem::size_of::<f32>()));
 }
 
 pub type HEIGHT = usize;

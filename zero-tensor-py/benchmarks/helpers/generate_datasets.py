@@ -51,7 +51,7 @@ def generate_imagefolder(
         n = images_per_class + (1 if class_id < remainder else 0)
         for _ in range(n):
             
-            width = 100 + (global_idx * 37 % 301)
+            width = (100 + (global_idx * 37 % 301))
             height = 100 + (global_idx * 53 % 301)
 
             jpeg_bytes = generate_jpeg_bytes(width, height, seed=global_idx, quality=quality)
