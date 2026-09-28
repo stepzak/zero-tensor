@@ -9,6 +9,9 @@ pub enum TarJpegProcessorError {
     #[error("Invalid DT")]
     InvalidDT,
 
+    #[error("Invalid image destination layout at {0}: expected contiguous CHW with matching dtype")]
+    InvalidLayout(String),
+
     #[error("DecodeError at file {0}: {1}")]
     DecodeError(String, DecodeError<turbojpeg::Error>),
 

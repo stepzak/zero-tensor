@@ -60,6 +60,8 @@ impl ImageInfo {
 pub trait ImageDecoder: Send + Sync {
     type Error: std::error::Error;
 
+    /// Decode to planar CHW. Padding extends each channel to
+    /// `max_height` rows of `stride` elements and is filled with zeroes.
     fn decode<P: Pixel, T: Into<Option<PaddingConfig>>>(
         &self,
         compressed: &[u8],

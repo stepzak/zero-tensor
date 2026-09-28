@@ -142,12 +142,27 @@ impl<'data, T: AugmentationItem + Pixel, F: Fn(&str) -> i64 + Send + Sync> TarRe
         let w = info.width();
         let elem_size = std::mem::size_of::<T>();
 
+        let layout = writer
+            .layout("image")
+            .ok_or_else(|| TarJpegProcessorError::InvalidLayout(filename.into()))?;
+        let [channels, target_h, target_w] = *layout.shape() else {
+            return Err(TarJpegProcessorError::InvalidLayout(filename.into()));
+        };
+        let (output_h, output_w) = self.target_h_w.unwrap_or((h, w));
+        if channels != c
+            || layout.dt() != self.dt
+            || layout.strides() != [target_h * target_w, target_w, 1]
+            || target_h < output_h
+            || target_w < output_w
+        {
+            return Err(TarJpegProcessorError::InvalidLayout(filename.into()));
+        }
+
         writer
             .write("image", |buf| {
                 AUG_BUFS.with_borrow_mut(|bufs| {
                     let AugBuffers { a, b } = &mut *bufs;
 
-                    let (target_h, target_w) = self.target_h_w.unwrap_or((h, w));
                     let target_pixels = target_h * target_w * c;
                     let target_bytes = target_pixels * elem_size;
 
@@ -198,7 +213,9 @@ impl<'data, T: AugmentationItem + Pixel, F: Fn(&str) -> i64 + Send + Sync> TarRe
 
                         let output: &mut [T] = bytemuck::cast_slice_mut(&mut buf[..target_bytes]);
                         Self::copy_with_padding(
-                            augmented,
+                            &augmented[..output_shape.channels
+                                * output_shape.height
+                                * output_shape.width],
                             output_shape,
                             output,
                             target_h,
@@ -208,7 +225,11 @@ impl<'data, T: AugmentationItem + Pixel, F: Fn(&str) -> i64 + Send + Sync> TarRe
                         let output: &mut [T] = bytemuck::cast_slice_mut(&mut buf[..target_bytes]);
 
                         self.decoder
-                            .decode::<T, PaddingConfig>(data, output, PaddingConfig::new(w, h))
+                            .decode::<T, PaddingConfig>(
+                                data,
+                                output,
+                                PaddingConfig::new(target_w, target_h),
+                            )
                             .map_err(|e| TarJpegProcessorError::DecodeError(filename.into(), e))?;
                     }
 

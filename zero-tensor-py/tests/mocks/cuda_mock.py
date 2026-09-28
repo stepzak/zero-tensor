@@ -1,4 +1,5 @@
 import torch
+from contextlib import nullcontext
 from unittest.mock import patch
 
 
@@ -10,9 +11,10 @@ class MockEvent:
 
     def record(self, stream=None):
         self._recorded = True
+        self.stream = stream
 
     def synchronize(self):
-        pass
+        self._completed = True
 
     def query(self):
         return self._completed
@@ -37,20 +39,16 @@ _original_tensor_to = torch.Tensor.to
 
 def mock_tensor_to(self, device=None, dtype=None, non_blocking=False,
                    copy=False, memory_format=None):
-    if copy or (dtype is not None and dtype != self.dtype):
-        new_tensor = _original_tensor_to(self, dtype=dtype)
-        if copy and dtype is None:
-            new_tensor = new_tensor.clone()
-        return new_tensor
-    else:
-        return self
+    # A CPU -> CUDA transfer has distinct storage, even without copy=True.
+    cuda_copy = device is not None and torch.device(device).type == "cuda"
+    return _original_tensor_to(self, dtype=dtype, copy=copy or cuda_copy)
 
 
 def mock_cuda_available():
     return True
 
 
-def mock_current_stream():
+def mock_current_stream(device=None):
     return MockStream()
 
 
@@ -68,6 +66,7 @@ class MockedGPU:
             patch('torch.cuda.is_available', mock_cuda_available),
             patch('torch.cuda.Event', mock_cuda_event),
             patch('torch.cuda.Stream', mock_cuda_stream),
+            patch('torch.cuda.stream', lambda stream: nullcontext()),
             patch('torch.cuda.current_stream', mock_current_stream),
             patch.object(torch.Tensor, 'to', mock_tensor_to),
         ]

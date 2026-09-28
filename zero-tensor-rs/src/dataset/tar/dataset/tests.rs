@@ -387,3 +387,60 @@ fn test_buffer_capacity_larger_than_data() {
         assert!(cell.data.is_empty());
     }
 }
+
+#[test]
+fn concurrent_refills_cross_shards_without_losing_or_repeating_records() {
+    use crate::core::writer::{TensorWriter, TensorWriterCache};
+    use std::sync::{Barrier, Mutex as StdMutex};
+    const WORKERS: usize = 8;
+    const ITEMS: usize = 128;
+    let shards: Vec<_> = (0..ITEMS)
+        .map(|i| create_shard_with_files(&[("sample.bin", &[i as u8])]))
+        .collect();
+    let dataset = TarDataset::new(
+        shards.iter().map(|s| s.path().to_path_buf()).collect(),
+        WORKERS,
+        None::<fn(&PathBuf) -> Result<usize, std::io::Error>>,
+        TestProcessor,
+        SmallRng::seed_from_u64(42),
+    )
+    .unwrap();
+    for epoch in 0..2 {
+        dataset
+            .next_epoch(&EpochContext {
+                epoch,
+                shuffle: false,
+            })
+            .unwrap();
+        let layouts = dataset
+            .dynamic_layouts(&(0..WORKERS).collect::<Vec<_>>())
+            .unwrap();
+        let barrier = Barrier::new(WORKERS);
+        let results = StdMutex::new(Vec::new());
+        std::thread::scope(|scope| {
+            for idx in 0..WORKERS {
+                let (dataset, layouts, barrier, results) = (&dataset, &layouts, &barrier, &results);
+                scope.spawn(move || {
+                    let mut cache = TensorWriterCache::with_capacity(1);
+                    for _ in 0..ITEMS / WORKERS {
+                        let mut buffer = [0u8; 64];
+                        let mut writer =
+                            TensorWriter::new(layouts, &mut buffer, &mut cache).unwrap();
+                        barrier.wait();
+                        let result = dataset.write_item_into(idx, &mut writer);
+                        drop(writer);
+                        results.lock().unwrap().push(result.map(|_| buffer[0]));
+                    }
+                });
+            }
+        });
+        let mut values: Vec<u8> = results
+            .into_inner()
+            .unwrap()
+            .into_iter()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        values.sort_unstable();
+        assert_eq!(values, (0..ITEMS as u8).collect::<Vec<_>>());
+    }
+}

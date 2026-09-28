@@ -66,75 +66,37 @@ impl ImageDecoder for JpegDecoder {
 
         let mut decompressor = Decompressor::new()?;
 
-        if std::any::TypeId::of::<P>() == std::any::TypeId::of::<u8>() {
-            let u8_output: &mut [u8] = bytemuck::cast_slice_mut(&mut output[..total]);
-
-            let target_image = Image {
-                pixels: u8_output,
-                width,
-                pitch: stride * channels,
-                height,
-                format: PixelFormat::RGB,
-            };
-            decompressor.decompress(compressed, target_image)?;
-
-            if stride > width {
-                let u8_output: &mut [u8] = bytemuck::cast_slice_mut(&mut output[..total]);
-
-                for y in 0..height {
-                    let pad_start = (y * stride + width) * channels;
-                    let pad_end = (y * stride + stride) * channels;
-                    u8_output[pad_start..pad_end].fill(0);
-                }
-            }
-
-            if max_height > height {
-                let u8_output: &mut [u8] = bytemuck::cast_slice_mut(&mut output[..total]);
-
-                let bottom_start = height * stride * channels;
-                let bottom_end = max_height * stride * channels;
-                u8_output[bottom_start..bottom_end].fill(0);
-            }
-
-            return Ok(header);
-        }
-
+        // TurboJPEG emits interleaved RGB. Dataset layouts and image
+        // augmentations use planar CHW, including the padded destination.
         RAW_PIXELS.with_borrow_mut(|raw_pixels| -> Result<(), DecodeError<Self::Error>> {
-            if raw_pixels.len() < total {
-                raw_pixels.resize(total, 0);
+            let dense_len = width * height * channels;
+            if raw_pixels.len() < dense_len {
+                raw_pixels.resize(dense_len, 0);
             }
-            let pixels = &mut raw_pixels[..total];
+            let pixels = &mut raw_pixels[..dense_len];
+            decompressor.decompress(
+                compressed,
+                Image {
+                    pixels: &mut *pixels,
+                    width,
+                    pitch: width * channels,
+                    height,
+                    format: PixelFormat::RGB,
+                },
+            )?;
 
-            let target_image = Image {
-                pixels,
-                width,
-                pitch: stride * channels,
-                height,
-                format: PixelFormat::RGB,
-            };
-            decompressor.decompress(compressed, target_image)?;
-            let pixels = &mut raw_pixels[..total];
-
-            for y in 0..height {
-                let row_start = y * stride * channels;
-                let row_end = row_start + width * channels;
-
-                for i in row_start..row_end {
-                    output[i] = P::from_u8(pixels[i]);
+            let plane_len = stride * max_height;
+            for channel in 0..channels {
+                let plane = &mut output[channel * plane_len..(channel + 1) * plane_len];
+                for y in 0..height {
+                    let row = &mut plane[y * stride..(y + 1) * stride];
+                    for x in 0..width {
+                        row[x] = P::from_u8(pixels[(y * width + x) * channels + channel]);
+                    }
+                    row[width..].fill(P::from_u8(0));
                 }
-
-                if stride > width {
-                    let row_max_end = row_start + stride * channels;
-                    output[row_end..row_max_end].fill(P::from_u8(0));
-                }
+                plane[height * stride..].fill(P::from_u8(0));
             }
-
-            if max_height > height {
-                let bottom_start = height * stride * channels;
-                let bottom_end = max_height * stride * channels;
-                output[bottom_start..bottom_end].fill(P::from_u8(0));
-            }
-
             Ok(())
         })?;
 

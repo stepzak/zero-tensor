@@ -196,7 +196,8 @@ impl<T: AugmentationItem + Pixel> JpegFolderDataset<T> {
                 .with_borrow_mut(|rng| aug.apply(decoded, input_shape, augmented, Some(&mut *rng)))
                 .map_err(JpegFolderDatasetError::Augmentation)?;
 
-            Self::copy_with_padding(augmented, output_shape, output, max_h, max_w);
+            let output_len = output_shape.channels * output_shape.height * output_shape.width;
+            Self::copy_with_padding(&augmented[..output_len], output_shape, output, max_h, max_w);
 
             Ok(max_h * max_w * c * elem_size)
         })

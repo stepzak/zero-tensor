@@ -45,7 +45,7 @@ impl TensorDT {
             Some(TensorDT::F32)
         } else if tid == std::any::TypeId::of::<i64>() {
             Some(TensorDT::I64)
-        } else if tid == TypeId::of::<half::bf16>() {
+        } else if tid == TypeId::of::<half::f16>() {
             Some(TensorDT::F16)
         } else if tid == TypeId::of::<half::bf16>() {
             Some(TensorDT::BF16)
@@ -269,6 +269,12 @@ mod tests {
     use super::*;
     use bytemuck::cast_slice_mut;
     use smallvec::smallvec;
+
+    #[test]
+    fn half_types_have_distinct_dtypes() {
+        assert_eq!(TensorDT::from_type::<half::f16>(), Some(TensorDT::F16));
+        assert_eq!(TensorDT::from_type::<half::bf16>(), Some(TensorDT::BF16));
+    }
 
     #[test]
     fn view_contiguous_1d() {

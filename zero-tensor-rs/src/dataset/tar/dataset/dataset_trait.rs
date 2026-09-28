@@ -103,8 +103,15 @@ impl<'data, P: TarRecordProcessor<'data>, R: Rng + Send> ZeroTensorDataset<'data
 
         let mut name_buf = [0u8; MAX_PATH_LEN];
 
+        let shards = self.shards.read();
+        let mut reader = self.tar_reader.lock();
         loop {
-            let mut reader = self.tar_reader.lock();
+            // Check under the same lock as reading and advancing shards.
+            if self.exhausted.load(Ordering::Acquire) {
+                cell.data.clear();
+                cell.layout = None;
+                return Ok(());
+            }
 
             match reader.next_record(&mut name_buf) {
                 Ok(record) => {
@@ -116,9 +123,7 @@ impl<'data, P: TarRecordProcessor<'data>, R: Rng + Send> ZeroTensorDataset<'data
                     return Ok(());
                 }
                 Err(TarReaderError::Eof) => {
-                    drop(reader);
-                    let shards = self.shards.read();
-                    self.move_to_next_shard(&shards)?;
+                    self.move_to_next_shard(&shards, &mut reader)?;
 
                     if self.exhausted.load(Ordering::Acquire) {
                         cell.data.clear();

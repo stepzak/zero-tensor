@@ -9,6 +9,7 @@ pub use cache::TensorWriterCache;
 pub use error::*;
 
 pub struct TensorWriter<'a, 'b, 'c> {
+    layouts: &'b IndexMap<&'a str, TensorBatchLayout>,
     slot_buffer: &'c mut [u8],
     cache: &'b mut TensorWriterCache<'a>,
 }
@@ -17,7 +18,7 @@ impl<'a, 'b, 'c> TensorWriter<'a, 'b, 'c> {
     pub const ALIGNMENT: usize = 64;
 
     pub fn new(
-        layouts: &IndexMap<&'a str, TensorBatchLayout>,
+        layouts: &'b IndexMap<&'a str, TensorBatchLayout>,
         slot_buffer: &'c mut [u8],
         cache: &'b mut TensorWriterCache<'a>,
     ) -> Result<Self, TensorWriterError> {
@@ -38,7 +39,16 @@ impl<'a, 'b, 'c> TensorWriter<'a, 'b, 'c> {
             });
         }
 
-        Ok(TensorWriter { cache, slot_buffer })
+        Ok(TensorWriter {
+            layouts,
+            cache,
+            slot_buffer,
+        })
+    }
+
+    /// The per-item destination layout, including padding chosen for this batch.
+    pub fn layout(&self, key: &str) -> Option<&TensorBatchLayout> {
+        self.layouts.get(key)
     }
 
     pub fn get_offset_size(&self, key: &str) -> Option<(usize, usize)> {

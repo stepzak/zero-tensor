@@ -77,7 +77,7 @@ class TestToDeviceEventRecording:
         finally:
             producer.stop()
 
-    def test_copy_does_not_record_event(self, temp_ipc_env):
+    def test_copy_records_event(self, temp_ipc_env):
         socket_path, shm_name, shm_path = temp_ipc_env
         batches = [_make_batch([2, 2], [1.0, 2.0, 3.0, 4.0])]
         producer = MockAsyncProducer(socket_path, shm_path, NSLOTS, SLOT_SIZE)
@@ -88,12 +88,12 @@ class TestToDeviceEventRecording:
                     for batch in consumer:
                         consumer.to_device(batch, device='cuda', non_blocking=True, copy=True)
                         slot_idx, event = consumer._pending_releases[-1]
-                        assert event is None
+                        assert event is not None
                         break
         finally:
             producer.stop()
 
-    def test_dtype_change_does_not_record_event(self, temp_ipc_env):
+    def test_dtype_change_records_event(self, temp_ipc_env):
         socket_path, shm_name, shm_path = temp_ipc_env
         batches = [_make_batch([2, 2], [1.0, 2.0, 3.0, 4.0])]
         producer = MockAsyncProducer(socket_path, shm_path, NSLOTS, SLOT_SIZE)
@@ -107,7 +107,7 @@ class TestToDeviceEventRecording:
                         )
                         assert result["data"].data_ptr() != batch["data"].data_ptr()
                         slot_idx, event = consumer._pending_releases[-1]
-                        assert event is None
+                        assert event is not None
                         break
         finally:
             producer.stop()
@@ -217,3 +217,102 @@ class TestCpuFallback:
                         break
         finally:
             producer.stop()
+@pytest.mark.parametrize("as_dict", [False, True])
+@pytest.mark.parametrize("copy,dtype", [(False, None), (True, None), (False, torch.float16)])
+def test_async_transfer_holds_slot_until_copy_completes(as_dict, copy, dtype):
+    import collections
+    from unittest.mock import Mock
+
+    consumer = ZeroTensorConsumer("unused", "unused")
+    consumer._current_slot_idx = 0
+    consumer._slot_events = [None]
+    consumer._pending_releases = collections.deque([(0, None)])
+    consumer._store_tail = Mock()
+    source = torch.arange(4, dtype=torch.float32)
+    with MockedGPU():
+        result = consumer.to_device(
+            {"image": source} if as_dict else source,
+            device="cuda", non_blocking=True, copy=copy, dtype=dtype,
+        )
+        destination = result["image"] if as_dict else result
+        assert destination.data_ptr() != source.data_ptr()
+        event = consumer._pending_releases[0][1]
+        assert event is not None
+        event._completed = False
+        consumer._drain_releases(0)
+        consumer._store_tail.assert_not_called()
+        assert consumer._release_tail == 0
+        event._completed = True
+        consumer._drain_releases(0)
+        consumer._store_tail.assert_called_once_with(1)
+
+
+def test_explicit_stream_runs_copy_and_waits_for_previous_transfer():
+    import collections
+    from contextlib import contextmanager
+    from unittest.mock import Mock
+    from mocks.cuda_mock import MockStream, mock_tensor_to
+
+    consumer = ZeroTensorConsumer("unused", "unused")
+    consumer._current_slot_idx = 0
+    consumer._slot_events = [None]
+    consumer._pending_releases = collections.deque([(0, None)])
+    source = torch.ones(4)
+    first_stream, second_stream = MockStream(), MockStream()
+    second_stream.wait_event = Mock()
+    active = []
+
+    @contextmanager
+    def stream_context(stream):
+        active.append(stream)
+        try:
+            yield
+        finally:
+            active.pop()
+
+    copies = []
+
+    def checked_copy(tensor, **kwargs):
+        copies.append(active[-1])
+        return mock_tensor_to(tensor, **kwargs)
+
+    with MockedGPU(), patch("torch.cuda.stream", stream_context), patch.object(torch.Tensor, "to", checked_copy):
+        consumer.to_device(source, device="cuda", non_blocking=True, stream=first_stream)
+        first_event = consumer._pending_releases[0][1]
+        consumer.to_device(source, device="cuda", non_blocking=True, stream=second_stream)
+        second_event = consumer._pending_releases[0][1]
+        assert copies == [first_stream, second_stream]
+        second_stream.wait_event.assert_called_once_with(first_event)
+        assert first_event.stream is first_stream
+        assert second_event.stream is second_stream
+        assert second_event is not first_event
+
+
+def test_forced_release_waits_for_incomplete_event():
+    import collections
+    from unittest.mock import Mock
+
+    consumer = ZeroTensorConsumer("unused", "unused")
+    event = MockEvent()
+    event._completed = False
+    consumer._pending_releases = collections.deque([(0, event)])
+    consumer._store_tail = Mock(side_effect=lambda _: pytest.fail("Released before completion") if not event.query() else None)
+    consumer._drain_releases(1)
+    assert event.query()
+    consumer._store_tail.assert_called_once_with(1)
+
+
+def test_close_waits_for_active_transfer_before_unmapping():
+    import collections
+    from unittest.mock import Mock
+
+    consumer = ZeroTensorConsumer("unused", "unused")
+    event = MockEvent()
+    event._completed = False
+    consumer._pending_releases = collections.deque([(0, event)])
+    consumer._store_tail = Mock()
+    consumer.mem = Mock()
+    consumer.mem.close.side_effect = lambda: pytest.fail("Unmapped during transfer") if not event.query() else None
+    consumer.close()
+    assert event.query()
+    consumer._store_tail.assert_called_once_with(1)

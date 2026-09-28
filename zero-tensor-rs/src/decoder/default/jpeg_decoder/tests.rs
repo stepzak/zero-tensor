@@ -45,7 +45,7 @@ fn test_jpeg_info() {
 }
 
 #[test]
-fn test_jpeg_decode_u8_fast_path() {
+fn test_jpeg_decode_u8_planar() {
     let width = 32;
     let height = 32;
     let jpeg_bytes = create_test_jpeg(width, height);
@@ -64,15 +64,15 @@ fn test_jpeg_decode_u8_fast_path() {
         "Output should not be all zeros"
     );
 
-    let idx = (20 * width + 10) * 3;
+    let idx = 20 * width + 10;
     assert_matches!(info.format(), ImageFormat::Jpeg);
     assert!((output[idx] as i32 - 10).abs() < 5, "R channel mismatch");
     assert!(
-        (output[idx + 1] as i32 - 20).abs() < 5,
+        (output[width * height + idx] as i32 - 20).abs() < 5,
         "G channel mismatch"
     );
     assert!(
-        (output[idx + 2] as i32 - 128).abs() < 5,
+        (output[2 * width * height + idx] as i32 - 128).abs() < 5,
         "B channel mismatch"
     );
 }
@@ -138,4 +138,38 @@ fn test_jpeg_decode_invalid_data() {
     let result = decoder.decode(b"this is not a jpeg file", &mut output, None);
 
     assert!(result.is_err(), "Should fail on invalid data");
+}
+
+#[test]
+fn decode_chw_matches_rgb_reference_and_zeroes_each_plane_padding() {
+    let (width, height) = (17, 9);
+    let (stride, max_height) = (23, 12);
+    let jpeg = create_test_jpeg(width, height);
+    let reference = turbojpeg::decompress(&jpeg, PixelFormat::RGB).unwrap();
+    let decoder = JpegDecoder::new();
+    let plane_len = stride * max_height;
+    let mut bytes = vec![99u8; 3 * plane_len + 1];
+    let mut floats = vec![99.0f32; 3 * plane_len + 1];
+    decoder
+        .decode(&jpeg, &mut bytes, PaddingConfig::new(stride, max_height))
+        .unwrap();
+    decoder
+        .decode(&jpeg, &mut floats, PaddingConfig::new(stride, max_height))
+        .unwrap();
+    for c in 0..3 {
+        for y in 0..max_height {
+            for x in 0..stride {
+                let expected = if y < height && x < width {
+                    reference.pixels[y * reference.pitch + x * 3 + c]
+                } else {
+                    0
+                };
+                let idx = c * plane_len + y * stride + x;
+                assert_eq!(bytes[idx], expected, "channel={c}, y={y}, x={x}");
+                assert_eq!(floats[idx], expected as f32 / 255.0);
+            }
+        }
+    }
+    assert_eq!(bytes[3 * plane_len], 99);
+    assert_eq!(floats[3 * plane_len], 99.0);
 }

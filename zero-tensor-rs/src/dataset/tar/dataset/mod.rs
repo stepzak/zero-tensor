@@ -154,8 +154,7 @@ impl<'data, P: TarRecordProcessor<'data>, R: Rng + Send> TarDataset<'data, P, R>
                     cell_idx += 1;
                 }
                 Err(TarReaderError::Eof) => {
-                    drop(reader);
-                    self.move_to_next_shard(&shards)?;
+                    self.move_to_next_shard(&shards, &mut reader)?;
                 }
                 Err(e) => {
                     let filename = self.shuffle_buffer[cell_idx].lock().filename.clone();
@@ -167,13 +166,17 @@ impl<'data, P: TarRecordProcessor<'data>, R: Rng + Send> TarDataset<'data, P, R>
         Ok(())
     }
 
-    fn open_shard(&self, shards: &[PathBuf], idx: usize) -> Result<(), TarDatasetError<P::Error>> {
+    fn open_shard(
+        &self,
+        shards: &[PathBuf],
+        idx: usize,
+        reader: &mut TarReader,
+    ) -> Result<(), TarDatasetError<P::Error>> {
         if idx >= shards.len() {
             self.exhausted.store(true, Ordering::Release);
             return Ok(());
         }
 
-        let mut reader = self.tar_reader.lock();
         reader
             .open_file(&shards[idx])
             .map_err(|e| TarDatasetError::IoError {
@@ -183,9 +186,13 @@ impl<'data, P: TarRecordProcessor<'data>, R: Rng + Send> TarDataset<'data, P, R>
         Ok(())
     }
 
-    fn move_to_next_shard(&self, shards: &[PathBuf]) -> Result<(), TarDatasetError<P::Error>> {
+    fn move_to_next_shard(
+        &self,
+        shards: &[PathBuf],
+        reader: &mut TarReader,
+    ) -> Result<(), TarDatasetError<P::Error>> {
         let next_idx = self.current_shard_idx.fetch_add(1, Ordering::Relaxed) + 1;
-        self.open_shard(shards, next_idx)
+        self.open_shard(shards, next_idx, reader)
     }
 
     fn update_cell(

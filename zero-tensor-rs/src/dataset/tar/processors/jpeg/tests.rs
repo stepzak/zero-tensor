@@ -136,3 +136,98 @@ fn test_cold_alignment_error_handling() {
 
     assert!(result.is_none());
 }
+
+#[rstest::rstest]
+#[case(false)]
+#[case(true)]
+fn mixed_size_images_use_batch_padding(#[case] normalize: bool) {
+    use crate::augmentation::{AugmentationPipeline, default::normalize::Normalize};
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("mixed.tar");
+    let mut archive = tar::Builder::new(File::create(&path).unwrap());
+    let mut references = Vec::new();
+    for (idx, (width, height)) in [(4, 2), (2, 4)].into_iter().enumerate() {
+        let pixels: Vec<u8> = (0..width * height)
+            .flat_map(|i| [200, i as u8 * 10, 30])
+            .collect();
+        let jpeg = turbojpeg::Compressor::new()
+            .unwrap()
+            .compress_to_vec(Image {
+                pixels: pixels.as_slice(),
+                width,
+                height,
+                pitch: width * 3,
+                format: RGB,
+            })
+            .unwrap();
+        references.push(turbojpeg::decompress(&jpeg, RGB).unwrap());
+        let mut header = tar::Header::new_gnu();
+        header.set_size(jpeg.len() as u64);
+        header.set_cksum();
+        archive
+            .append_data(&mut header, format!("{idx}.jpg"), jpeg.as_slice())
+            .unwrap();
+    }
+    archive.finish().unwrap();
+    let augmentation = if normalize {
+        Some(
+            AugmentationPipeline::new()
+                .then(Normalize::<f32>::new(vec![0.1, 0.2, 0.3], vec![0.5; 3]).unwrap())
+                .unwrap(),
+        )
+    } else {
+        None
+    };
+    let dataset = TarDataset::new(
+        vec![path],
+        2,
+        None::<fn(&PathBuf) -> Result<usize, TarJpegProcessorError>>,
+        TarJpegProcessor::<f32, _>::new(augmentation, |_| 7).unwrap(),
+        StdRng::seed_from_u64(42),
+    )
+    .unwrap();
+    dataset
+        .next_epoch(&EpochContext {
+            epoch: 0,
+            shuffle: false,
+        })
+        .unwrap();
+    let layouts = dataset.dynamic_layouts(&[0, 1]).unwrap();
+    assert_eq!(layouts["image"].shape(), &[3, 4, 4]);
+    let size: usize = layouts
+        .values()
+        .map(|v| v.total_bytes().next_multiple_of(64))
+        .sum();
+    for (idx, reference) in references.iter().enumerate() {
+        let mut buffer = aligned_vec::AVec::<u8>::with_capacity(64, size);
+        buffer.resize(size, 0xff);
+        let mut cache = TensorWriterCache::with_capacity(2);
+        let mut writer = TensorWriter::new(&layouts, &mut buffer, &mut cache).unwrap();
+        dataset.write_item_into(idx, &mut writer).unwrap();
+        writer.finalize().unwrap();
+        let (offset, _) = writer.get_offset_size("image").unwrap();
+        drop(writer);
+        let actual: &[f32] = bytemuck::cast_slice(&buffer[offset..offset + 3 * 4 * 4 * 4]);
+        for c in 0..3 {
+            for y in 0..4 {
+                for x in 0..4 {
+                    let expected = if y < reference.height && x < reference.width {
+                        let value =
+                            reference.pixels[y * reference.pitch + x * 3 + c] as f32 / 255.0;
+                        if normalize {
+                            (value - [0.1, 0.2, 0.3][c]) * 2.0
+                        } else {
+                            value
+                        }
+                    } else {
+                        0.0
+                    };
+                    assert!(
+                        (actual[c * 16 + y * 4 + x] - expected).abs() < 1e-6,
+                        "image={idx}, channel={c}, y={y}, x={x}"
+                    );
+                }
+            }
+        }
+    }
+}

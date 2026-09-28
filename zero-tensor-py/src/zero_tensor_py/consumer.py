@@ -203,6 +203,11 @@ class ZeroTensorConsumer:
             self._prefetch_thread.join(timeout=2.0)
             
         self._prefetch_thread = None
+        # Copies can still be in flight when the caller closes an active iterator.
+        # Keep its mapped storage alive until the last transfer completes.
+        with self._prefetch_lock:
+            if self._pending_releases:
+                self._drain_releases(self._release_tail + len(self._pending_releases))
         if self.mem is not None and self.is_running_offset > 0:
             try:
                 self._store_is_running(0)
@@ -470,55 +475,43 @@ class ZeroTensorConsumer:
         if self._current_slot_idx is None:
             raise RuntimeError("to_device() called outside active iteration")
 
-        if isinstance(tensor, dict):
-            result = {}
-            any_view = False
-            for key, t in tensor.items():
-                gpu_t = t.to(
-                    device=device,
-                    dtype=dtype,
-                    non_blocking=non_blocking,
-                    copy=copy,
-                    memory_format=memory_format,
+        def transfer_one(source):
+            target = torch.device(device) if device is not None else source.device
+            cuda_copy = source.device.type == "cpu" and target.type == "cuda"
+            if not cuda_copy:
+                return source.to(
+                    device=device, dtype=dtype, non_blocking=non_blocking,
+                    copy=copy, memory_format=memory_format,
                 )
-                result[key] = gpu_t
-                if (
-                    not copy
-                    and self._slot_events is not None
-                    and t.data_ptr() == gpu_t.data_ptr()
-                ):
-                    any_view = True
 
-            if any_view and non_blocking and self._slot_events is not None:
-                self._record_slot_event(stream)
+            copy_stream = stream if stream is not None else torch.cuda.current_stream(target)
+            # Every copy from this slot must finish before it can be reused.
+            # Chain transfers even when callers select different CUDA streams.
+            with torch.cuda.stream(copy_stream):
+                with self._prefetch_lock:
+                    previous = self._pending_releases[-1][1] if self._pending_releases else None
+                if previous is not None:
+                    copy_stream.wait_event(previous)
+                try:
+                    return source.to(
+                        device=device, dtype=dtype, non_blocking=non_blocking,
+                        copy=copy, memory_format=memory_format,
+                    )
+                finally:
+                    if non_blocking:
+                        self._record_slot_event(copy_stream)
 
-            return result
+        if isinstance(tensor, dict):
+            return {key: transfer_one(value) for key, value in tensor.items()}
+        return transfer_one(tensor)
 
-        gpu_tensor = tensor.to(
-            device=device,
-            dtype=dtype,
-            non_blocking=non_blocking,
-            copy=copy,
-            memory_format=memory_format,
-        )
-
-        is_view = (
-            not copy
-            and self._slot_events is not None
-            and tensor.data_ptr() == gpu_tensor.data_ptr()
-        )
-
-        if is_view and non_blocking and self._slot_events is not None:
-            self._record_slot_event(stream)
-
-        return gpu_tensor
-
-    def _record_slot_event(self, stream: Optional[torch.cuda.Stream] = None):
-        if not stream:
-            stream = torch.cuda.current_stream()
-        idx = self._current_slot_idx
-        event = self._slot_events[idx]
+    def _record_slot_event(self, stream: torch.cuda.Stream):
+        # A fresh event also supports successive transfers to different GPUs.
+        event = torch.cuda.Event(enable_timing=False)
         event.record(stream)
+        idx = self._current_slot_idx
+        if self._slot_events is not None:
+            self._slot_events[idx] = event
         with self._prefetch_lock:
             if self._pending_releases and self._pending_releases[-1][0] == idx:
                 self._pending_releases[-1] = (idx, event)

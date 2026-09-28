@@ -71,11 +71,11 @@ fn test_jpeg_folder_dataset_e2e() {
         "Red channel of first pixel should be > 0"
     );
     assert!(
-        (f32_view[1] - 128.0 / 255.0).abs() < 0.01,
+        (f32_view[80 * 100] - 128.0 / 255.0).abs() < 0.01,
         "Green channel mismatch"
     );
 
-    let padding_start_idx = 64 * 3;
+    let padding_start_idx = 64;
     assert_eq!(
         f32_view[padding_start_idx], 0.0,
         "Right padding should be zeroed"
@@ -91,7 +91,7 @@ fn test_jpeg_folder_dataset_e2e() {
         "Right padding should be zeroed"
     );
 
-    let bottom_padding_idx = (64 * 100 + 0) * 3;
+    let bottom_padding_idx = 64 * 100;
     assert_eq!(
         f32_view[bottom_padding_idx], 0.0,
         "Bottom padding should be zeroed"
